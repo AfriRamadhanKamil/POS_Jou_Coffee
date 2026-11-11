@@ -377,4 +377,7 @@ Phase 6 — Sync
 8. **Environment variable** untuk semua secret (JWT key, DB password, API key gateway). Jangan hardcode.
 9. Semua response API gunakan format konsisten, contoh: `{ "success": true, "data": {...}, "message": "..." }`.
 10. Prefix semua endpoint: `/api/v1/`.
+<<<<<<< HEAD
 
+=======
+>>>>>>> 0c785a0 (feat(backend): implement Flask REST API, models, and tests for POS Jou Coffee (fixes #2))
