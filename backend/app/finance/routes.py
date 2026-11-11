@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone
 from flask import Blueprint, request
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
@@ -11,6 +11,91 @@ from app.finance.models import (
 from app.orders.models import Payment, Order
 
 finance_bp = Blueprint("finance", __name__, url_prefix="/api/v1")
+
+
+@finance_bp.route("/expense-categories", methods=["GET"])
+@jwt_required()
+@role_required(*ALL_ROLES)
+def list_expense_categories():
+    categories = ExpenseCategory.query_active().order_by(ExpenseCategory.name).all()
+    return api_response([{
+        "id": category.id,
+        "name": category.name,
+        "description": category.description
+    } for category in categories])
+
+
+@finance_bp.route("/expense-categories", methods=["POST"])
+@jwt_required()
+@role_required(ROLE_ADMIN, ROLE_SUPER_ADMIN)
+def create_expense_category():
+    data = request.get_json() or {}
+    name = data.get("name", "")
+    if not isinstance(name, str):
+        return error_response("Nama kategori tidak valid", 400)
+    name = name.strip()
+    if not name:
+        return error_response("Nama kategori wajib diisi", 400)
+    if ExpenseCategory.query_active().filter(db.func.lower(ExpenseCategory.name) == name.lower()).first():
+        return error_response("Kategori pengeluaran sudah tersedia", 409)
+
+    category = ExpenseCategory(name=name, description=data.get("description"))
+    db.session.add(category)
+    db.session.commit()
+    return api_response({
+        "id": category.id,
+        "name": category.name,
+        "description": category.description
+    }, "Kategori pengeluaran dibuat", 201)
+
+
+@finance_bp.route("/expense-categories/<category_id>", methods=["PATCH"])
+@jwt_required()
+@role_required(ROLE_ADMIN, ROLE_SUPER_ADMIN)
+def update_expense_category(category_id):
+    category = ExpenseCategory.query_active().filter_by(id=category_id).first()
+    if not category:
+        return error_response("Kategori pengeluaran tidak ditemukan", 404)
+
+    data = request.get_json() or {}
+    if "name" in data:
+        name = data["name"]
+        if not isinstance(name, str):
+            return error_response("Nama kategori tidak valid", 400)
+        name = name.strip()
+        if not name:
+            return error_response("Nama kategori wajib diisi", 400)
+        duplicate = ExpenseCategory.query_active().filter(
+            db.func.lower(ExpenseCategory.name) == name.lower(),
+            ExpenseCategory.id != category.id
+        ).first()
+        if duplicate:
+            return error_response("Kategori pengeluaran sudah tersedia", 409)
+        category.name = name
+    if "description" in data:
+        category.description = data["description"]
+
+    db.session.commit()
+    return api_response({
+        "id": category.id,
+        "name": category.name,
+        "description": category.description
+    }, "Kategori pengeluaran diperbarui")
+
+
+@finance_bp.route("/expense-categories/<category_id>", methods=["DELETE"])
+@jwt_required()
+@role_required(ROLE_ADMIN, ROLE_SUPER_ADMIN)
+def delete_expense_category(category_id):
+    category = ExpenseCategory.query_active().filter_by(id=category_id).first()
+    if not category:
+        return error_response("Kategori pengeluaran tidak ditemukan", 404)
+    if Expense.query_active().filter_by(category_id=category.id).first():
+        return error_response("Kategori masih digunakan oleh pengeluaran", 409)
+
+    category.soft_delete()
+    db.session.commit()
+    return api_response(None, "Kategori pengeluaran dihapus")
 
 
 # ==================== CASH SHIFTS ====================
@@ -193,13 +278,19 @@ def list_expenses():
 def create_expense():
     data = request.get_json() or {}
     category_id = data.get("category_id")
-    amount = Decimal(str(data.get("amount", 0.0)))
+    try:
+        amount = Decimal(str(data.get("amount", 0)))
+    except (InvalidOperation, TypeError, ValueError):
+        return error_response("Nominal pengeluaran tidak valid", 400)
     notes = data.get("notes")
     receipt_image_url = data.get("receipt_image_url")
     shift_id = data.get("shift_id")
 
-    if not category_id or amount <= Decimal("0"):
+    if not category_id or not amount.is_finite() or amount <= Decimal("0"):
         return error_response("Kategori dan nominal pengeluaran wajib diisi", 400)
+    category = ExpenseCategory.query_active().filter_by(id=category_id).first()
+    if not category:
+        return error_response("Kategori pengeluaran tidak ditemukan", 404)
 
     expense = Expense(
         category_id=category_id,
@@ -224,10 +315,18 @@ def update_expense(expense_id):
 
     data = request.get_json() or {}
     if "amount" in data:
-        expense.amount = Decimal(str(data["amount"]))
+        try:
+            amount = Decimal(str(data["amount"]))
+        except (InvalidOperation, TypeError, ValueError):
+            return error_response("Nominal pengeluaran tidak valid", 400)
+        if not amount.is_finite() or amount <= Decimal("0"):
+            return error_response("Nominal pengeluaran harus lebih besar dari 0", 400)
+        expense.amount = amount
     if "notes" in data:
         expense.notes = data["notes"]
     if "category_id" in data:
+        if not ExpenseCategory.query_active().filter_by(id=data["category_id"]).first():
+            return error_response("Kategori pengeluaran tidak ditemukan", 404)
         expense.category_id = data["category_id"]
 
     db.session.commit()
@@ -245,4 +344,3 @@ def delete_expense(expense_id):
     expense.soft_delete()
     db.session.commit()
     return api_response(None, "Pengeluaran dihapus")
-

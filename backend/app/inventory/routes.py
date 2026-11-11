@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone
 from flask import Blueprint, request
 from flask_jwt_extended import jwt_required
@@ -14,6 +14,88 @@ from app.inventory.services import (
 )
 
 inventory_bp = Blueprint("inventory", __name__, url_prefix="/api/v1")
+
+
+@inventory_bp.route("/units", methods=["GET"])
+@jwt_required()
+@role_required(ROLE_ADMIN, ROLE_SUPER_ADMIN)
+def list_units():
+    units = Unit.query_active().order_by(Unit.name).all()
+    return api_response([{
+        "id": unit.id,
+        "name": unit.name,
+        "symbol": unit.symbol
+    } for unit in units])
+
+
+@inventory_bp.route("/units", methods=["POST"])
+@jwt_required()
+@role_required(ROLE_ADMIN, ROLE_SUPER_ADMIN)
+def create_unit():
+    data = request.get_json() or {}
+    name = data.get("name", "")
+    symbol = data.get("symbol", "")
+    if not isinstance(name, str) or not isinstance(symbol, str):
+        return error_response("Nama dan simbol satuan tidak valid", 400)
+    name = name.strip()
+    symbol = symbol.strip()
+    if not name or not symbol:
+        return error_response("Nama dan simbol satuan wajib diisi", 400)
+    if Unit.query_active().filter(db.func.lower(Unit.symbol) == symbol.lower()).first():
+        return error_response("Simbol satuan sudah tersedia", 409)
+
+    unit = Unit(name=name, symbol=symbol)
+    db.session.add(unit)
+    db.session.commit()
+    return api_response({
+        "id": unit.id,
+        "name": unit.name,
+        "symbol": unit.symbol
+    }, "Satuan dibuat", 201)
+
+
+@inventory_bp.route("/units/<unit_id>", methods=["PATCH"])
+@jwt_required()
+@role_required(ROLE_ADMIN, ROLE_SUPER_ADMIN)
+def update_unit(unit_id):
+    unit = Unit.query_active().filter_by(id=unit_id).first()
+    if not unit:
+        return error_response("Satuan tidak ditemukan", 404)
+
+    data = request.get_json() or {}
+    name = data.get("name", unit.name)
+    symbol = data.get("symbol", unit.symbol)
+    if not isinstance(name, str) or not isinstance(symbol, str):
+        return error_response("Nama dan simbol satuan tidak valid", 400)
+    name = name.strip()
+    symbol = symbol.strip()
+    if not name or not symbol:
+        return error_response("Nama dan simbol satuan wajib diisi", 400)
+    duplicate = Unit.query_active().filter(
+        db.func.lower(Unit.symbol) == symbol.lower(),
+        Unit.id != unit.id
+    ).first()
+    if duplicate:
+        return error_response("Simbol satuan sudah tersedia", 409)
+
+    unit.name = name
+    unit.symbol = symbol
+    db.session.commit()
+    return api_response({"id": unit.id, "name": unit.name, "symbol": unit.symbol}, "Satuan diperbarui")
+
+
+@inventory_bp.route("/units/<unit_id>", methods=["DELETE"])
+@jwt_required()
+@role_required(ROLE_ADMIN, ROLE_SUPER_ADMIN)
+def delete_unit(unit_id):
+    unit = Unit.query_active().filter_by(id=unit_id).first()
+    if not unit:
+        return error_response("Satuan tidak ditemukan", 404)
+    if Ingredient.query_active().filter_by(unit_id=unit.id).first():
+        return error_response("Satuan masih digunakan oleh bahan baku", 409)
+    unit.soft_delete()
+    db.session.commit()
+    return api_response(None, "Satuan dihapus")
 
 
 # ==================== INGREDIENTS ====================
@@ -41,13 +123,22 @@ def list_ingredients():
 @role_required(ROLE_ADMIN, ROLE_SUPER_ADMIN)
 def create_ingredient():
     data = request.get_json() or {}
-    name = data.get("name", "").strip()
+    name = str(data.get("name", "")).strip()
     unit_id = data.get("unit_id")
-    min_stock = Decimal(str(data.get("min_stock", 0.0)))
-    last_price = Decimal(str(data.get("last_purchase_price", 0.0)))
+    try:
+        min_stock = Decimal(str(data.get("min_stock", 0)))
+        last_price = Decimal(str(data.get("last_purchase_price", 0)))
+    except (InvalidOperation, TypeError, ValueError):
+        return error_response("Stok minimum atau harga beli tidak valid", 400)
 
     if not name or not unit_id:
         return error_response("Nama dan unit wajib diisi", 400)
+    if not min_stock.is_finite() or min_stock < 0 or not last_price.is_finite() or last_price < 0:
+        return error_response("Stok minimum dan harga beli tidak boleh negatif", 400)
+    if not Unit.query_active().filter_by(id=unit_id).first():
+        return error_response("Satuan tidak ditemukan", 404)
+    if Ingredient.query_active().filter(db.func.lower(Ingredient.name) == name.lower()).first():
+        return error_response("Nama bahan baku sudah tersedia", 409)
 
     ingredient = Ingredient(
         name=name,
@@ -133,12 +224,21 @@ def create_or_update_recipe():
 def create_stock_movement():
     data = request.get_json() or {}
     ingredient_id = data.get("ingredient_id")
-    movement_type = data.get("type", "ADJUSTMENT").upper()  # ADJUSTMENT, WASTE
-    quantity = Decimal(str(data.get("quantity", 0.0)))
+    movement_type = str(data.get("type", "ADJUSTMENT")).upper()
+    try:
+        quantity = Decimal(str(data.get("quantity", 0)))
+    except (InvalidOperation, TypeError, ValueError):
+        return error_response("Jumlah stok tidak valid", 400)
     notes = data.get("notes")
 
-    if not ingredient_id or quantity == Decimal("0"):
-        return error_response("Ingredient dan jumlah tidak boleh 0", 400)
+    if not ingredient_id or not quantity.is_finite() or quantity == Decimal("0"):
+        return error_response("Bahan baku dan jumlah tidak boleh kosong atau 0", 400)
+    if movement_type not in {"ADJUSTMENT", "WASTE"}:
+        return error_response("Jenis pergerakan stok tidak valid", 400)
+    if movement_type == "WASTE" and quantity > 0:
+        return error_response("Jumlah waste harus negatif", 400)
+    if not Ingredient.query_active().filter_by(id=ingredient_id).first():
+        return error_response("Bahan baku tidak ditemukan", 404)
 
     movement = record_stock_movement(
         ingredient_id=ingredient_id,
@@ -164,17 +264,34 @@ def record_opname():
     items = data.get("items", [])
     notes = data.get("notes")
 
-    if not items:
+    if not isinstance(items, list) or not items:
         return error_response("Item opname wajib diisi", 400)
+
+    normalized_items = []
+    seen_ingredients = set()
+    for item in items:
+        if not isinstance(item, dict):
+            return error_response("Format item opname tidak valid", 400)
+        ingredient_id = item.get("ingredient_id")
+        try:
+            actual_qty = Decimal(str(item.get("actual_stock")))
+        except (InvalidOperation, TypeError, ValueError):
+            return error_response("Jumlah stok opname tidak valid", 400)
+        if not ingredient_id or not actual_qty.is_finite() or actual_qty < 0:
+            return error_response("Bahan baku dan stok aktual tidak valid", 400)
+        if ingredient_id in seen_ingredients:
+            return error_response("Bahan baku tidak boleh dicatat dua kali dalam satu opname", 400)
+        if not Ingredient.query_active().filter_by(id=ingredient_id).first():
+            return error_response("Bahan baku tidak ditemukan", 404)
+        seen_ingredients.add(ingredient_id)
+        normalized_items.append((ingredient_id, actual_qty))
 
     opname_no = f"OPN-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
     opname = StockOpname(opname_no=opname_no, notes=notes)
     db.session.add(opname)
     db.session.flush()
 
-    for item in items:
-        ing_id = item["ingredient_id"]
-        actual_qty = Decimal(str(item["actual_stock"]))
+    for ing_id, actual_qty in normalized_items:
         balance = StockBalance.query.filter_by(ingredient_id=ing_id).first()
         system_qty = balance.current_stock if balance else Decimal("0.0000")
         diff = actual_qty - system_qty
@@ -212,13 +329,28 @@ def create_purchase():
     data = request.get_json() or {}
     items = data.get("items", [])
 
-    if not items:
+    if not isinstance(items, list) or not items:
         return error_response("Item pembelian wajib diisi", 400)
 
+    normalized_items = []
     total_amount = Decimal("0.00")
     for item in items:
-        subtotal = Decimal(str(item["quantity"])) * Decimal(str(item["unit_price"]))
+        if not isinstance(item, dict):
+            return error_response("Format item pembelian tidak valid", 400)
+        try:
+            ingredient_id = item.get("ingredient_id")
+            qty = Decimal(str(item.get("quantity")))
+            unit_price = Decimal(str(item.get("unit_price")))
+        except (InvalidOperation, TypeError, ValueError):
+            return error_response("Kuantitas atau harga pembelian tidak valid", 400)
+        if not ingredient_id or not qty.is_finite() or qty <= 0 or not unit_price.is_finite() or unit_price < 0:
+            return error_response("Bahan, kuantitas positif, dan harga valid wajib diisi", 400)
+        ingredient = Ingredient.query_active().filter_by(id=ingredient_id).first()
+        if not ingredient:
+            return error_response("Bahan baku tidak ditemukan", 404)
+        subtotal = qty * unit_price
         total_amount += subtotal
+        normalized_items.append((ingredient, qty, unit_price, subtotal))
 
     purchase = Purchase(
         invoice_no=data.get("invoice_no"),
@@ -229,14 +361,10 @@ def create_purchase():
     db.session.add(purchase)
     db.session.flush()
 
-    for item in items:
-        qty = Decimal(str(item["quantity"]))
-        unit_price = Decimal(str(item["unit_price"]))
-        subtotal = qty * unit_price
-
+    for ingredient, qty, unit_price, subtotal in normalized_items:
         p_item = PurchaseItem(
             purchase_id=purchase.id,
-            ingredient_id=item["ingredient_id"],
+            ingredient_id=ingredient.id,
             quantity=qty,
             unit_price=unit_price,
             subtotal=subtotal
@@ -244,13 +372,11 @@ def create_purchase():
         db.session.add(p_item)
 
         # Update last purchase price in ingredient
-        ing = Ingredient.query.get(item["ingredient_id"])
-        if ing:
-            ing.last_purchase_price = unit_price
+        ingredient.last_purchase_price = unit_price
 
         # Add stock movement
         record_stock_movement(
-            ingredient_id=item["ingredient_id"],
+            ingredient_id=ingredient.id,
             movement_type="PURCHASE",
             quantity=qty,
             reference_type="PURCHASE",
@@ -260,4 +386,3 @@ def create_purchase():
 
     db.session.commit()
     return api_response({"id": purchase.id, "total_amount": float(purchase.total_amount)}, "Pembelian dicatat", 201)
-

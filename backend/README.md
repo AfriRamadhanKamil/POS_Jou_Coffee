@@ -65,6 +65,8 @@ copy backend\.env.example backend\.env
 ```
 Sesuaikan `DATABASE_URL` (default ke SQLite untuk testing lokal, atau gunakan MySQL 8 di production).
 
+Production menolak konfigurasi yang tidak memiliki `DATABASE_URL` MySQL, `REDIS_URL`, `SECRET_KEY`, `JWT_SECRET_KEY`, `QR_HMAC_SECRET`, dan `PAYMENT_GATEWAY_SERVER_KEY`. Secret aplikasi harus memiliki sedikitnya 32 karakter. Gunakan kredensial merchant Midtrans yang sesuai dengan environment dan simpan seluruh secret di environment/server secret manager, bukan di repository.
+
 ### 3. Seed Database Awal
 
 Jalankan script seeder untuk membuat tabel dan data akun awal:
@@ -76,6 +78,8 @@ Data akun bawaan:
 - **Super Admin:** `username: superadmin`, `password: superadmin123`, `PIN: 999999`
 - **Admin/Owner:** `username: admin`, `password: admin123`, `PIN: 123456`
 - **Kasir:** `username: kasir`, `password: kasir123`, `PIN: 654321`
+
+Akun tersebut hanya untuk development/demo. Ganti atau hapus sebelum production dan jangan gunakan kredensial contoh untuk deployment publik.
 
 ### 4. Menjalankan Server Development
 
@@ -155,4 +159,3 @@ pytest backend/tests
 ### 6. Offline-Online Sync
 - `POST /api/v1/sync/push` — Batch push dari SQLite mobile (idempoten via `idempotency_key`)
 - `GET /api/v1/sync/pull?cursor=N` — Incremental pull data sejak `server_version` terakhir
-

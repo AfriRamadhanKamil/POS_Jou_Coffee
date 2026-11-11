@@ -10,6 +10,27 @@ def create_app(config_name=None):
 
     flask_app = Flask(__name__)
     flask_app.config.from_object(config_by_name.get(config_name, config_by_name["development"]))
+    if config_name == "production":
+        required_environment = (
+            "DATABASE_URL",
+            "REDIS_URL",
+            "SECRET_KEY",
+            "JWT_SECRET_KEY",
+            "QR_HMAC_SECRET",
+            "PAYMENT_GATEWAY_SERVER_KEY",
+        )
+        missing = [name for name in required_environment if not os.getenv(name)]
+        if missing:
+            raise RuntimeError(
+                "Konfigurasi production wajib diisi: " + ", ".join(missing)
+            )
+        for name in ("SECRET_KEY", "JWT_SECRET_KEY", "QR_HMAC_SECRET"):
+            if len(os.environ[name]) < 32:
+                raise RuntimeError(f"{name} harus memiliki minimal 32 karakter di production")
+        if not flask_app.config["SQLALCHEMY_DATABASE_URI"].startswith(
+            ("mysql://", "mysql+pymysql://")
+        ):
+            raise RuntimeError("Production wajib menggunakan MySQL melalui DATABASE_URL")
 
     # Initialize extensions
     db.init_app(flask_app)
@@ -18,7 +39,7 @@ def create_app(config_name=None):
     ma.init_app(flask_app)
     cors.init_app(flask_app)
     
-    # Initialize socketio with redis message queue if not in testing/sqlite
+    # Initialize Socket.IO with Redis; only development may fall back to process-local events.
     redis_url = flask_app.config.get("REDIS_URL")
     if flask_app.config.get("TESTING"):
         socketio.init_app(flask_app)
@@ -26,7 +47,11 @@ def create_app(config_name=None):
         try:
             socketio.init_app(flask_app, message_queue=redis_url)
         except Exception:
-            # Fallback to local memory queue if redis is unavailable in dev
+            if config_name == "production":
+                raise
+            flask_app.logger.warning(
+                "Redis unavailable; realtime events are limited to this development process."
+            )
             socketio.init_app(flask_app)
 
     # JWT Error handlers

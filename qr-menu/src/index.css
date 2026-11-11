@@ -1,0 +1,6 @@
+html { min-width: 320px; background: #f7f5f0; }
+body { margin: 0; min-width: 320px; min-height: 100vh; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 3px solid #ba8056;
+  outline-offset: 2px;
+}

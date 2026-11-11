@@ -51,7 +51,7 @@ class DevelopmentConfig(Config):
 class TestingConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
-    JWT_SECRET_KEY = "test-jwt-secret-key"
+    JWT_SECRET_KEY = "test-jwt-secret-key-for-jou-coffee-32"
 
 
 class ProductionConfig(Config):
@@ -63,4 +63,3 @@ config_by_name = {
     "testing": TestingConfig,
     "production": ProductionConfig,
 }
-

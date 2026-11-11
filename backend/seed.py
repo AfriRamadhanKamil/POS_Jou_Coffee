@@ -5,6 +5,7 @@ from app.common.auth import hash_password, ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_KA
 from app.auth.models import User
 from app.catalog.models import Category, Menu, MenuVariant, SalesChannel, ModifierGroup, Modifier
 from app.inventory.models import Unit, Ingredient, Recipe, RecipeItem, StockBalance
+from app.finance.models import ExpenseCategory
 from app.orders.models import Table
 from app.tables.routes import generate_table_qr_token
 
@@ -67,6 +68,11 @@ def seed_database():
                 db.session.add(u)
                 db.session.flush()
             unit_map[sym] = u
+
+        # Seed common expense categories
+        for category_name in ("Bahan Baku", "Operasional", "Perlengkapan"):
+            if not ExpenseCategory.query.filter_by(name=category_name).first():
+                db.session.add(ExpenseCategory(name=category_name))
 
         # Seed Ingredients
         ing_data = [
@@ -166,4 +172,3 @@ def seed_database():
 
 if __name__ == "__main__":
     seed_database()
-

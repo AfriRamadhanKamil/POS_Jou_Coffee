@@ -1,0 +1,46 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: jou_coffee_mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: jou_coffee
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+
+  redis:
+    image: redis:7-alpine
+    container_name: jou_coffee_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: jou_coffee_backend
+    restart: always
+    environment:
+      FLASK_ENV: development
+      PORT: 5000
+      DATABASE_URL: mysql+pymysql://root:password@mysql:3306/jou_coffee?charset=utf8mb4
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: jou-jwt-dev-secret-key-change-in-production
+    ports:
+      - "5000:5000"
+    depends_on:
+      - mysql
+      - redis
+    volumes:
+      - ./backend:/app
+
+volumes:
+  mysql_data:
+  redis_data:
