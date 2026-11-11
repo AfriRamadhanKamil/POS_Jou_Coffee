@@ -71,4 +71,11 @@ Thumbs.db
 # IDEs
 .vscode/
 .idea/
+<<<<<<< HEAD
+<<<<<<< HEAD
 
+=======
+>>>>>>> 0c785a0 (feat(backend): implement Flask REST API, models, and tests for POS Jou Coffee (fixes #2))
+=======
+
+>>>>>>> ab6c132 (feat(backend): complete backend setup with Dockerfile and tests)
