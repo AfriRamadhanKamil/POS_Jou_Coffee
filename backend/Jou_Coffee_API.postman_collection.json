@@ -1,0 +1,238 @@
+{
+	"info": {
+		"_postman_id": "jou-coffee-pos-api-v1",
+		"name": "POS Jou Coffee API",
+		"description": "Postman Collection for testing POS Jou Coffee Flask Backend API",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://127.0.0.1:5000/api/v1",
+			"type": "string"
+		},
+		{
+			"key": "access_token",
+			"value": "",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "Health Check",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/health",
+					"host": ["{{base_url}}"],
+					"path": ["health"]
+				}
+			}
+		},
+		{
+			"name": "Auth",
+			"item": [
+				{
+					"name": "1. Login Kasir",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.data && jsonData.data.access_token) {",
+									"    pm.collectionVariables.set('access_token', jsonData.data.access_token);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"username\": \"kasir\",\n    \"password\": \"kasir123\",\n    \"device_id\": \"DEV-KASIR-01\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/login",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "login"]
+						}
+					}
+				},
+				{
+					"name": "2. Verify PIN Kasir",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Content-Type", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{access_token}}"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"pin\": \"654321\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/verify-pin",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "verify-pin"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "POS & Catalog",
+			"item": [
+				{
+					"name": "Get Full POS Catalog",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{access_token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/menus/catalog",
+							"host": ["{{base_url}}"],
+							"path": ["menus", "catalog"]
+						}
+					}
+				},
+				{
+					"name": "Create POS Order (Direct Approved)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Content-Type", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{access_token}}"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"source\": \"POS\",\n    \"order_type\": \"DINE_IN\",\n    \"customer_name\": \"Andi\",\n    \"items\": [\n        {\n            \"menu_id\": \"<GANTI_DENGAN_MENU_ID>\",\n            \"item_name\": \"Kopi Susu Jou\",\n            \"quantity\": 2,\n            \"unit_price\": 18000,\n            \"discount\": 0\n        }\n    ],\n    \"payment\": {\n        \"payment_method\": \"TUNAI\",\n        \"amount\": 50000\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/orders",
+							"host": ["{{base_url}}"],
+							"path": ["orders"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Public QR Menu",
+			"item": [
+				{
+					"name": "1. Customer Views Menu via QR Token",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/public/qr/<QR_TOKEN_MEJA>/menu",
+							"host": ["{{base_url}}"],
+							"path": ["public", "qr", "<QR_TOKEN_MEJA>", "menu"]
+						}
+					}
+				},
+				{
+					"name": "2. Customer Creates QR Order (Tunai)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"customer_name\": \"Budi\",\n    \"order_type\": \"DINE_IN\",\n    \"payment_method\": \"TUNAI\",\n    \"items\": [\n        {\n            \"menu_id\": \"<GANTI_DENGAN_MENU_ID>\",\n            \"quantity\": 1\n        }\n    ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/public/qr/<QR_TOKEN_MEJA>/orders",
+							"host": ["{{base_url}}"],
+							"path": ["public", "qr", "<QR_TOKEN_MEJA>", "orders"]
+						}
+					}
+				},
+				{
+					"name": "3. Cashier Views Pending QR Orders",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{access_token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/orders/pending-approval",
+							"host": ["{{base_url}}"],
+							"path": ["orders", "pending-approval"]
+						}
+					}
+				},
+				{
+					"name": "4. Cashier Approves QR Order",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{access_token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/orders/<ORDER_ID>/approve",
+							"host": ["{{base_url}}"],
+							"path": ["orders", "<ORDER_ID>", "approve"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Reports & Finance",
+			"item": [
+				{
+					"name": "Sales Report",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{access_token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/reports/sales",
+							"host": ["{{base_url}}"],
+							"path": ["reports", "sales"]
+						}
+					}
+				},
+				{
+					"name": "Cash Summary",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{access_token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/reports/cash-summary",
+							"host": ["{{base_url}}"],
+							"path": ["reports", "cash-summary"]
+						}
+					}
+				},
+				{
+					"name": "Gross Profit Report (Admin Only)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Authorization", "value": "Bearer {{access_token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/reports/profit",
+							"host": ["{{base_url}}"],
+							"path": ["reports", "profit"]
+						}
+					}
+				}
+			]
+		}
+	]
+}
