@@ -99,3 +99,4 @@ def calculate_recipe_cogs(recipe: Recipe) -> Decimal:
         if ing:
             total_cogs += r_item.quantity * ing.last_purchase_price
     return total_cogs
+

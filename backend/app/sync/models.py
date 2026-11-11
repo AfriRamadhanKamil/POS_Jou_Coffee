@@ -33,3 +33,4 @@ class SyncChange(db.Model):
     payload = Column(Text, nullable=False)  # JSON representation
     device_id = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=get_utc_now, nullable=False, index=True)
+

@@ -181,3 +181,4 @@ def list_audit_logs():
         "created_at": l.created_at.isoformat() if l.created_at else None
     } for l in logs]
     return api_response(result)
+

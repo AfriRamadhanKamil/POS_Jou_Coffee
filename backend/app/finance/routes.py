@@ -245,3 +245,4 @@ def delete_expense(expense_id):
     expense.soft_delete()
     db.session.commit()
     return api_response(None, "Pengeluaran dihapus")
+

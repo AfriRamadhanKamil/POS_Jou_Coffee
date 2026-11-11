@@ -102,3 +102,4 @@ def sync_pull():
         "has_more": len(items) == limit,
         "changes": items
     })
+

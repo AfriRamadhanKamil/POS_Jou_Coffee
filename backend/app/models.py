@@ -17,3 +17,4 @@ from app.finance.models import (
 from app.sync.models import (
     Notification, Setting, SyncChange
 )
+

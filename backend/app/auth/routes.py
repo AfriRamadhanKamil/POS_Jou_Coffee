@@ -134,3 +134,4 @@ def verify_pin():
 def logout():
     """Logout endpoint."""
     return api_response(None, "Logout berhasil")
+

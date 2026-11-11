@@ -260,3 +260,4 @@ def create_purchase():
 
     db.session.commit()
     return api_response({"id": purchase.id, "total_amount": float(purchase.total_amount)}, "Pembelian dicatat", 201)
+

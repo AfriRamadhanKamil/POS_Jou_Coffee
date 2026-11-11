@@ -76,3 +76,4 @@ def regenerate_qr_token(table_id):
         "new_qr_token": table.qr_token,
         "qr_url": f"/qr/{table.qr_token}"
     }, "QR Token berhasil diperbarui (token lama tidak berlaku lagi)")
+

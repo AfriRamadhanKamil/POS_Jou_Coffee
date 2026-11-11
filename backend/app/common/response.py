@@ -23,3 +23,4 @@ def error_response(message="An error occurred", status_code=400, errors=None):
     if errors is not None:
         payload["errors"] = errors
     return jsonify(payload), status_code
+

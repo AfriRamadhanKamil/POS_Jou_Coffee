@@ -183,3 +183,4 @@ def get_profit_report():
         "gross_profit": float(gross_profit),
         "margin_percentage": float(margin_percent)
     })
+

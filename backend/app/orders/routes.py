@@ -437,3 +437,4 @@ def reject_order(order_id):
     }, namespace="/ws")
 
     return api_response({"id": order.id, "status": order.status}, "Order ditolak")
+

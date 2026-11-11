@@ -54,3 +54,4 @@ class CashMovement(SyncBaseModel):
     notes = Column(Text, nullable=True)
 
     shift = relationship("CashShift", back_populates="movements")
+

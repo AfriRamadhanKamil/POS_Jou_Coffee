@@ -149,3 +149,4 @@ def test_qr_menu_and_order_creation(client):
     res_approve = client.post(f"/api/v1/orders/{order_id}/approve", headers={"Authorization": f"Bearer {token}"})
     assert res_approve.status_code == 200
     assert res_approve.get_json()["data"]["status"] == STATUS_APPROVED
+

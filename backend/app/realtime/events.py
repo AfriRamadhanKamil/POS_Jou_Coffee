@@ -22,3 +22,4 @@ def handle_join_device(data):
     if device_id:
         join_room(f"device_{device_id}")
         emit("device_joined", {"device_id": device_id})
+

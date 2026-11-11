@@ -84,3 +84,4 @@ class MenuChannelPrice(SyncBaseModel):
 
     menu = relationship("Menu", back_populates="channel_prices")
     channel = relationship("SalesChannel", back_populates="channel_prices")
+

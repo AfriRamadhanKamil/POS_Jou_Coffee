@@ -119,3 +119,4 @@ class StockOpnameItem(SyncBaseModel):
 
     opname = relationship("StockOpname", back_populates="items")
     ingredient = relationship("Ingredient")
+

@@ -128,3 +128,4 @@ class OrderStatusLog(SyncBaseModel):
     notes = Column(Text, nullable=True)
 
     order = relationship("Order", back_populates="status_logs")
+

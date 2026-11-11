@@ -36,3 +36,4 @@ class SyncBaseModel(db.Model):
     def query_active(cls):
         """Query excluding soft-deleted records."""
         return cls.query.filter(cls.deleted_at.is_(None))
+

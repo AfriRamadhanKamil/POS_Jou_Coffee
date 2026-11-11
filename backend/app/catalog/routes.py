@@ -281,3 +281,4 @@ def create_channel():
     db.session.add(channel)
     db.session.commit()
     return api_response({"id": channel.id, "name": channel.name}, "Channel berhasil dibuat", 201)
+

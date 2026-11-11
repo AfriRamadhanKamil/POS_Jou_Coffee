@@ -155,3 +155,4 @@ pytest backend/tests
 ### 6. Offline-Online Sync
 - `POST /api/v1/sync/push` — Batch push dari SQLite mobile (idempoten via `idempotency_key`)
 - `GET /api/v1/sync/pull?cursor=N` — Incremental pull data sejak `server_version` terakhir
+

@@ -39,3 +39,4 @@ class AuditLog(SyncBaseModel):
     old_values = Column(Text, nullable=True)
     new_values = Column(Text, nullable=True)
     ip_address = Column(String(45), nullable=True)
+

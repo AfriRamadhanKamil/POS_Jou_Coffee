@@ -11,3 +11,4 @@ jwt = JWTManager()
 ma = Marshmallow()
 cors = CORS()
 socketio = SocketIO(cors_allowed_origins="*")
+
