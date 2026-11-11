@@ -4,21 +4,23 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+DEFAULT_DATABASE_URL = (
+    "mysql+pymysql://root:@127.0.0.1:3306/jou_coffee?charset=utf8mb4"
+)
+
 
 class Config:
     """Base configuration."""
     SECRET_KEY = os.getenv("SECRET_KEY", "jou-coffee-dev-secret-change-in-production")
     
     # SQLAlchemy
-    SQLALCHEMY_DATABASE_URI = os.getenv(
-        "DATABASE_URL",
-        "sqlite:///jou_coffee.db"
-    )
+    SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SQLALCHEMY_ENGINE_OPTIONS = {
-        "pool_pre_ping": True,
-        "pool_recycle": 3600,
-    } if "sqlite" not in os.getenv("DATABASE_URL", "sqlite") else {}
+    SQLALCHEMY_ENGINE_OPTIONS = (
+        {}
+        if SQLALCHEMY_DATABASE_URI.startswith("sqlite:")
+        else {"pool_pre_ping": True, "pool_recycle": 3600}
+    )
 
     # Redis
     REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
@@ -46,12 +48,19 @@ class Config:
 
 class DevelopmentConfig(Config):
     DEBUG = True
+    # Local development runs Socket.IO in-process; Redis is only required when
+    # explicitly configured for a multi-process setup.
+    SOCKETIO_MESSAGE_QUEUE = os.getenv("SOCKETIO_MESSAGE_QUEUE")
 
 
 class TestingConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+    SQLALCHEMY_ENGINE_OPTIONS = {}
+    SOCKETIO_MESSAGE_QUEUE = None
     JWT_SECRET_KEY = "test-jwt-secret-key-for-jou-coffee-32"
+    PAYMENT_GATEWAY_SERVER_KEY = ""
+    PAYMENT_GATEWAY_CLIENT_KEY = ""
 
 
 class ProductionConfig(Config):

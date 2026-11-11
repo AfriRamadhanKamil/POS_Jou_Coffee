@@ -1,6 +1,7 @@
 import json
 import hashlib
 import pytest
+from sqlalchemy.exc import OperationalError
 from app import create_app
 from app.extensions import db
 from app.common.auth import hash_password, ROLE_KASIR, ROLE_ADMIN, ROLE_SUPER_ADMIN
@@ -73,6 +74,18 @@ def test_health_check(client):
     assert res.status_code == 200
     data = res.get_json()
     assert data["success"] is True
+    assert data["data"] == {"api": "connected", "database": "connected"}
+
+
+def test_health_check_reports_database_unavailable(client, monkeypatch):
+    def fail_health_query(*args, **kwargs):
+        raise OperationalError("SELECT 1", {}, Exception("database unavailable"))
+
+    monkeypatch.setattr(db.session, "execute", fail_health_query)
+    response = client.get("/api/v1/health")
+
+    assert response.status_code == 503
+    assert response.get_json()["data"]["database"] == "unavailable"
 
 
 def test_production_configuration_rejects_missing_secrets(monkeypatch):
@@ -214,6 +227,32 @@ def test_get_pos_catalog(client):
     assert "categories" in data
     assert len(data["categories"]) > 0
     assert data["categories"][0]["name"] == "Coffee"
+
+
+def test_pos_order_retry_with_same_idempotency_key_does_not_duplicate(client):
+    headers = _login(client, "kasir", "kasir123")
+    menu_id = client.get(
+        "/api/v1/public/qr/test-token-meja-1/menu"
+    ).get_json()["data"]["categories"][0]["menus"][0]["id"]
+    payload = {
+        "idempotency_key": "offline-order-retry-001",
+        "order_type": "TAKE_AWAY",
+        "is_paid": True,
+        "items": [{
+            "menu_id": menu_id,
+            "item_name": "Espresso",
+            "quantity": 1,
+            "unit_price": 10000,
+        }],
+        "payment": {"payment_method": "TUNAI", "amount": 10000},
+    }
+
+    first = client.post("/api/v1/orders", headers=headers, json=payload)
+    retry = client.post("/api/v1/orders", headers=headers, json=payload)
+
+    assert first.status_code == 201
+    assert retry.status_code == 200
+    assert retry.get_json()["data"]["id"] == first.get_json()["data"]["id"]
 
 
 def test_qr_menu_and_order_creation(client):
