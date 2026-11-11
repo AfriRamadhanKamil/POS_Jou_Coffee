@@ -1,5 +1,7 @@
 import os
 from flask import Flask, jsonify
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from app.config import config_by_name
 from app.extensions import db, migrate, jwt, ma, cors, socketio
 
@@ -39,20 +41,14 @@ def create_app(config_name=None):
     ma.init_app(flask_app)
     cors.init_app(flask_app)
     
-    # Initialize Socket.IO with Redis; only development may fall back to process-local events.
-    redis_url = flask_app.config.get("REDIS_URL")
-    if flask_app.config.get("TESTING"):
-        socketio.init_app(flask_app)
-    else:
-        try:
-            socketio.init_app(flask_app, message_queue=redis_url)
-        except Exception:
-            if config_name == "production":
-                raise
-            flask_app.logger.warning(
-                "Redis unavailable; realtime events are limited to this development process."
-            )
-            socketio.init_app(flask_app)
+    # Local development and tests can run without Redis. Production uses Redis
+    # so Socket.IO events are shared between backend worker processes.
+    message_queue = (
+        flask_app.config.get("REDIS_URL")
+        if config_name == "production"
+        else flask_app.config.get("SOCKETIO_MESSAGE_QUEUE")
+    )
+    socketio.init_app(flask_app, message_queue=message_queue)
 
     # JWT Error handlers
     @jwt.unauthorized_loader
@@ -123,9 +119,22 @@ def create_app(config_name=None):
     # Health check route
     @flask_app.route("/api/v1/health", methods=["GET"])
     def health_check():
+        try:
+            db.session.execute(text("SELECT 1"))
+        except SQLAlchemyError:
+            db.session.rollback()
+            flask_app.logger.exception("Database readiness check failed")
+            return jsonify({
+                "success": False,
+                "message": "Backend aktif tetapi database tidak dapat diakses",
+                "data": {"api": "connected", "database": "unavailable"},
+                "version": "1.0.0"
+            }), 503
+
         return jsonify({
             "success": True,
-            "message": "POS Jou Coffee API is healthy",
+            "message": "POS Jou Coffee API and database are healthy",
+            "data": {"api": "connected", "database": "connected"},
             "version": "1.0.0"
         })
 
