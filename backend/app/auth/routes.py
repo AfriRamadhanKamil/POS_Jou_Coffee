@@ -22,15 +22,31 @@ def login():
     data = request.get_json() or {}
     username = data.get("username", "").strip()
     password = data.get("password", "")
+    pin = str(data.get("pin", "")).strip()
     device_id = data.get("device_id", "").strip()
     device_name = data.get("device_name", "Device")
 
-    if not username or not password:
-        return error_response("Username dan password wajib diisi", 400)
+    if not username:
+        if pin:
+            username = "kasir"
+        else:
+            return error_response("Username dan password atau PIN wajib diisi", 400)
+
+    if not password and not pin:
+        return error_response("Password atau PIN wajib diisi", 400)
 
     user = User.query.filter_by(username=username, is_active=True).first()
-    if not user or not verify_password(user.password_hash, password):
-        return error_response("Username atau password salah", 401)
+    if not user:
+        return error_response("Username atau kredensial salah", 401)
+
+    authenticated = False
+    if password and verify_password(user.password_hash, password):
+        authenticated = True
+    elif pin and user.pin_hash and verify_password(user.pin_hash, pin):
+        authenticated = True
+
+    if not authenticated:
+        return error_response("Username, password, atau PIN salah", 401)
 
     # Check device if device_id provided
     if device_id:

@@ -111,7 +111,11 @@ class AuthController extends Notifier<AuthState> {
     }
   }
 
-  Future<void> login(String username, String password) async {
+  Future<void> login(
+    String username, {
+    String? password,
+    String? pin,
+  }) async {
     state = state.copyWith(loading: true, clearError: true);
     try {
       final storage = ref.read(secureStorageProvider);
@@ -121,14 +125,21 @@ class AuthController extends Notifier<AuthState> {
         await storage.write(key: 'jou_device_id', value: deviceId);
       }
 
+      final body = <String, Object?>{
+        'username': username.trim(),
+        'device_id': deviceId,
+        'device_name': 'Jou Coffee Mobile',
+      };
+      if (password != null && password.isNotEmpty) {
+        body['password'] = password;
+      }
+      if (pin != null && pin.isNotEmpty) {
+        body['pin'] = pin;
+      }
+
       final result = await ref.read(apiClientProvider).postData(
         '/auth/login',
-        body: {
-          'username': username.trim(),
-          'password': password,
-          'device_id': deviceId,
-          'device_name': 'Jou Coffee Mobile',
-        },
+        body: body,
       );
       final user = result['user'];
       if (user is! Map<String, dynamic>) {
