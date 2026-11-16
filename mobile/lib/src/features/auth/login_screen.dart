@@ -20,11 +20,76 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _obscurePin = true;
 
   @override
+  void initState() {
+    super.initState();
+    Future.microtask(() async {
+      final storage = ref.read(secureStorageProvider);
+      final savedUrl = await storage.read(key: 'jou_server_url');
+      if (savedUrl != null && savedUrl.isNotEmpty && mounted) {
+        ref.read(apiClientProvider).setBaseUrl(savedUrl);
+        setState(() {});
+      }
+    });
+  }
+
+  @override
   void dispose() {
     _usernameController.dispose();
     _passwordController.dispose();
     _pinController.dispose();
     super.dispose();
+  }
+
+  Future<void> _showServerSettings() async {
+    final currentUrl = ref.read(apiClientProvider).dio.options.baseUrl;
+    final controller = TextEditingController(text: currentUrl);
+    final newUrl = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Pengaturan Alamat Server'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Masukkan alamat IP laptop/server Anda (contoh: http://192.168.100.9:5000/api/v1):',
+              style: TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(
+                labelText: 'Alamat Server API',
+                hintText: 'http://192.168.100.9:5000/api/v1',
+                prefixIcon: Icon(Icons.lan_outlined),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Simpan'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (newUrl != null && newUrl.isNotEmpty && mounted) {
+      ref.read(apiClientProvider).setBaseUrl(newUrl);
+      final storage = ref.read(secureStorageProvider);
+      await storage.write(key: 'jou_server_url', value: newUrl);
+      setState(() {});
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Alamat server diubah ke: $newUrl')),
+        );
+      }
+    }
   }
 
   Future<void> _submit() async {
@@ -211,6 +276,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           textAlign: TextAlign.center,
                           style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: colors.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Center(
+                          child: TextButton.icon(
+                            onPressed: _showServerSettings,
+                            icon: const Icon(Icons.settings_ethernet, size: 16),
+                            label: Text(
+                              'Server: ${ref.watch(apiClientProvider).dio.options.baseUrl}',
+                              style: const TextStyle(fontSize: 11),
+                            ),
                           ),
                         ),
                       ],

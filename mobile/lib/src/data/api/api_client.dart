@@ -6,7 +6,7 @@ class ApiClient {
         BaseOptions(
           baseUrl: const String.fromEnvironment(
             'API_BASE_URL',
-            defaultValue: 'http://10.0.2.2:5000/api/v1',
+            defaultValue: 'http://192.168.100.9:5000/api/v1',
           ),
           connectTimeout: const Duration(seconds: 10),
           receiveTimeout: const Duration(seconds: 15),
@@ -17,7 +17,7 @@ class ApiClient {
         BaseOptions(
           baseUrl: const String.fromEnvironment(
             'API_BASE_URL',
-            defaultValue: 'http://10.0.2.2:5000/api/v1',
+            defaultValue: 'http://192.168.100.9:5000/api/v1',
           ),
           connectTimeout: const Duration(seconds: 10),
           receiveTimeout: const Duration(seconds: 15),
@@ -116,6 +116,18 @@ class ApiClient {
     if (data is Map<String, dynamic>) return data;
     if (data is List) return {'items': data};
     return <String, dynamic>{};
+  }
+
+  void setBaseUrl(String url) {
+    var trimmed = url.trim();
+    if (trimmed.endsWith('/')) {
+      trimmed = trimmed.substring(0, trimmed.length - 1);
+    }
+    if (!trimmed.endsWith('/api/v1')) {
+      trimmed = '$trimmed/api/v1';
+    }
+    dio.options.baseUrl = trimmed;
+    _refreshDio.options.baseUrl = trimmed;
   }
 
   Future<Map<String, dynamic>> getData(String path, {Map<String, Object?>? query}) async {
