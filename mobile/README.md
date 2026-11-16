@@ -29,6 +29,28 @@ embedded in table QR codes; start the PWA with
 `npm.cmd run dev -- --host 0.0.0.0` and make sure customers' phones can reach
 that address. See [the QR Menu README](../../qr-menu/README.md).
 
+### Build an APK for a physical Android phone
+
+The default API address (`10.0.2.2`) is only for the Android emulator. To build
+an APK for a phone, replace `192.168.1.10` below with the computer's Wi-Fi IPv4
+address from `ipconfig`, then run this from the `mobile` directory:
+
+```powershell
+flutter build apk --debug --target-platform android-arm64 `
+  --dart-define=API_BASE_URL=http://192.168.1.10:5000/api/v1 `
+  --dart-define=QR_MENU_BASE_URL=http://192.168.1.10:5173
+```
+
+The APK is written to
+`build\app\outputs\flutter-apk\app-debug.apk`. Copy it to the phone and open it
+to install, or connect the phone with USB debugging enabled and run
+`adb install .\build\app\outputs\flutter-apk\app-debug.apk`. The phone and
+computer must be on the same trusted private Wi-Fi network, and the API health
+URL (`http://<COMPUTER-IPV4>:5000/api/v1/health`) must open in the phone's
+browser. If the computer's IP or network changes, rebuild the APK with its new
+IP. This debug APK allows local HTTP for development only; production builds
+must use HTTPS.
+
 The app stores the last successful menu catalog and unsynchronized POS orders
 in persistent Drift/SQLite on the device. Offline POS orders remain visible in
 the POS sync queue with their amount and any sync error. Pending orders are
