@@ -59,6 +59,7 @@ class StockMovement(SyncBaseModel):
     reference_type = Column(String(50), nullable=True)  # ORDER, PURCHASE, OPNAME, MANUAL
     reference_id = Column(String(36), nullable=True, index=True)
     notes = Column(Text, nullable=True)
+    idempotency_key = Column(String(64), unique=True, nullable=True, index=True)
 
     ingredient = relationship("Ingredient", back_populates="movements")
 
@@ -81,6 +82,7 @@ class Purchase(SyncBaseModel):
     total_amount = Column(Numeric(15, 2), default=0.00, nullable=False)
     purchase_date = Column(DateTime, default=get_utc_now, nullable=False)
     notes = Column(Text, nullable=True)
+    idempotency_key = Column(String(64), unique=True, nullable=True, index=True)
 
     items = relationship("PurchaseItem", back_populates="purchase", cascade="all, delete-orphan")
 
@@ -104,6 +106,7 @@ class StockOpname(SyncBaseModel):
     opname_no = Column(String(50), unique=True, nullable=False)
     status = Column(String(20), default="COMPLETED", nullable=False)
     notes = Column(Text, nullable=True)
+    idempotency_key = Column(String(64), unique=True, nullable=True, index=True)
 
     items = relationship("StockOpnameItem", back_populates="opname", cascade="all, delete-orphan")
 

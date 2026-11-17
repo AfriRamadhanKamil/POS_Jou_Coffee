@@ -150,6 +150,32 @@ def list_devices():
     return api_response(result)
 
 
+@users_bp.route("/devices/fcm-token", methods=["POST"])
+@jwt_required()
+@role_required(ROLE_KASIR, ROLE_ADMIN, ROLE_SUPER_ADMIN)
+def register_fcm_token():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return error_response("Token FCM wajib diisi", 400)
+
+    token = data.get("token")
+    if not isinstance(token, str) or not token.strip() or len(token.strip()) > 4096:
+        return error_response("Token FCM tidak valid", 400)
+
+    claims = get_jwt()
+    device = Device.query.filter_by(
+        user_id=get_jwt_identity(),
+        device_id=claims.get("device_id"),
+        is_revoked=False
+    ).first()
+    if not device or device.deleted_at is not None:
+        return error_response("Perangkat tidak ditemukan atau sudah dicabut", 404)
+
+    device.fcm_token = token.strip()
+    db.session.commit()
+    return api_response({"registered": True}, "Token FCM berhasil didaftarkan")
+
+
 @users_bp.route("/devices/<device_id>", methods=["DELETE"])
 @jwt_required()
 @role_required(ROLE_ADMIN, ROLE_SUPER_ADMIN)

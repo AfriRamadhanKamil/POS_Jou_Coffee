@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from flask import Blueprint, request
 from flask_jwt_extended import jwt_required
@@ -10,6 +10,7 @@ from app.orders.models import (
     Order, OrderItem, Payment,
     STATUS_APPROVED, STATUS_PREPARING, STATUS_READY, STATUS_COMPLETED
 )
+from app.catalog.models import SalesChannel
 from app.inventory.models import Recipe, RecipeItem, Ingredient
 from app.finance.models import Expense, CashMovement
 
@@ -34,25 +35,53 @@ def get_sales_report():
     end_date_str = request.args.get("end_date")
     order_type = request.args.get("order_type")
     channel_id = request.args.get("channel_id")
+    payment_method = request.args.get("payment_method")
+    cashier_id = request.args.get("cashier_id")
 
     query = Order.query.filter(Order.status.in_(VALID_REPORT_STATUSES))
 
-    if start_date_str:
-        start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+    try:
+        start_date = (
+            datetime.combine(
+                datetime.strptime(start_date_str, "%Y-%m-%d").date(),
+                time.min,
+                tzinfo=timezone.utc
+            )
+            if start_date_str else None
+        )
+        end_date = (
+            datetime.combine(
+                datetime.strptime(end_date_str, "%Y-%m-%d").date() + timedelta(days=1),
+                time.min,
+                tzinfo=timezone.utc
+            )
+            if end_date_str else None
+        )
+    except ValueError:
+        return error_response("Tanggal harus menggunakan format YYYY-MM-DD", 400)
+    if start_date and end_date and start_date >= end_date:
+        return error_response("start_date tidak boleh setelah end_date", 400)
+    if start_date:
         query = query.filter(Order.created_at >= start_date)
-    if end_date_str:
-        end_date = datetime.strptime(end_date_str + " 23:59:59", "%Y-%m-%d %H:%M:%S")
-        query = query.filter(Order.created_at <= end_date)
+    if end_date:
+        query = query.filter(Order.created_at < end_date)
     if order_type:
         query = query.filter_by(order_type=order_type)
     if channel_id:
         query = query.filter_by(channel_id=channel_id)
+    if payment_method:
+        query = query.filter(Order.payments.any(
+            Payment.payment_method == payment_method.upper()
+        ))
+    if cashier_id:
+        query = query.filter_by(created_by=cashier_id)
 
     orders = query.order_by(Order.created_at.desc()).all()
 
     total_gross = sum(o.subtotal for o in orders)
     total_discount = sum(o.discount for o in orders)
-    total_net = sum(o.total for o in orders)
+    total_order_amount = sum(o.total for o in orders)
+    total_net = sum(o.total - o.platform_commission for o in orders)
     total_commission = sum(o.platform_commission for o in orders)
 
     orders_list = [{
@@ -60,6 +89,8 @@ def get_sales_report():
         "order_no": o.order_no,
         "source": o.source,
         "order_type": o.order_type,
+        "channel_id": o.channel_id,
+        "external_order_id": o.external_order_id,
         "customer_name": o.customer_name,
         "subtotal": float(o.subtotal),
         "discount": float(o.discount),
@@ -75,6 +106,7 @@ def get_sales_report():
             "total_gross": float(total_gross),
             "total_discount": float(total_discount),
             "total_net": float(total_net),
+            "total_order_amount": float(total_order_amount),
             "total_platform_commission": float(total_commission)
         },
         "orders": orders_list
@@ -143,9 +175,55 @@ def get_charts():
         "total": float(row[2] or 0)
     } for row in by_type]
 
+    sales_by_day = db.session.query(
+        func.date(Order.created_at),
+        func.sum(Order.total)
+    ).filter(
+        Order.status.in_(VALID_REPORT_STATUSES)
+    ).group_by(func.date(Order.created_at)).order_by(func.date(Order.created_at)).all()
+    sales_by_hour = db.session.query(
+        extract("hour", Order.created_at),
+        func.sum(Order.total)
+    ).filter(
+        Order.status.in_(VALID_REPORT_STATUSES)
+    ).group_by(extract("hour", Order.created_at)).order_by(
+        extract("hour", Order.created_at)
+    ).all()
+    sales_by_channel = db.session.query(
+        Order.channel_id,
+        SalesChannel.name,
+        func.count(Order.id),
+        func.sum(Order.total),
+        func.sum(Order.platform_commission)
+    ).outerjoin(
+        SalesChannel,
+        Order.channel_id == SalesChannel.id
+    ).filter(
+        Order.status.in_(VALID_REPORT_STATUSES)
+    ).group_by(
+        Order.channel_id,
+        SalesChannel.name
+    ).all()
+
     return api_response({
         "top_selling_menus": top_items_data,
-        "sales_by_order_type": by_type_data
+        "sales_by_order_type": by_type_data,
+        "sales_by_day": [{
+            "date": row[0],
+            "total": float(row[1] or 0)
+        } for row in sales_by_day],
+        "sales_by_hour": [{
+            "hour": int(row[0]),
+            "total": float(row[1] or 0)
+        } for row in sales_by_hour],
+        "sales_by_channel": [{
+            "channel_id": row[0],
+            "channel_name": row[1],
+            "count": row[2],
+            "gross_total": float(row[3] or 0),
+            "commission": float(row[4] or 0),
+            "net_total": float((row[3] or 0) - (row[4] or 0))
+        } for row in sales_by_channel]
     })
 
 

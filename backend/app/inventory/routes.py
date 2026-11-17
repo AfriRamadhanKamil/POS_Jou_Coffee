@@ -1,7 +1,10 @@
+import hashlib
+import uuid
 from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone
 from flask import Blueprint, request
-from flask_jwt_extended import jwt_required
+from flask_jwt_extended import jwt_required, get_jwt_identity
+from sqlalchemy.exc import IntegrityError
 from app.extensions import db
 from app.common.response import api_response, error_response
 from app.common.auth import role_required, ROLE_ADMIN, ROLE_SUPER_ADMIN
@@ -10,10 +13,21 @@ from app.inventory.models import (
     StockBalance, Purchase, PurchaseItem, StockOpname, StockOpnameItem
 )
 from app.inventory.services import (
-    record_stock_movement, calculate_recipe_cogs
+    InsufficientStockError, record_stock_movement, calculate_recipe_cogs
 )
 
 inventory_bp = Blueprint("inventory", __name__, url_prefix="/api/v1")
+
+
+def _idempotency_key(data):
+    key = data.get("idempotency_key")
+    if not isinstance(key, str) or not key.strip() or len(key.strip()) > 64:
+        return None
+    return key.strip()
+
+
+def _movement_key(*parts):
+    return hashlib.sha256(":".join(parts).encode("utf-8")).hexdigest()
 
 
 @inventory_bp.route("/units", methods=["GET"])
@@ -116,6 +130,27 @@ def list_ingredients():
         "is_low_stock": (ing.balance.current_stock <= ing.min_stock) if ing.balance else True
     } for ing in ingredients]
     return api_response(result)
+
+
+@inventory_bp.route("/inventory/stock-balances", methods=["GET"])
+@jwt_required()
+@role_required(ROLE_ADMIN, ROLE_SUPER_ADMIN)
+def list_stock_balances():
+    ingredients = Ingredient.query_active().order_by(Ingredient.name).all()
+    return api_response([{
+        "ingredient_id": ingredient.id,
+        "ingredient_name": ingredient.name,
+        "unit": ingredient.unit.symbol if ingredient.unit else None,
+        "current_stock": (
+            float(ingredient.balance.current_stock)
+            if ingredient.balance else 0.0
+        ),
+        "min_stock": float(ingredient.min_stock),
+        "is_low_stock": (
+            ingredient.balance.current_stock <= ingredient.min_stock
+            if ingredient.balance else True
+        )
+    } for ingredient in ingredients])
 
 
 @inventory_bp.route("/ingredients", methods=["POST"])
@@ -222,32 +257,82 @@ def create_or_update_recipe():
 @jwt_required()
 @role_required(ROLE_ADMIN, ROLE_SUPER_ADMIN)
 def create_stock_movement():
-    data = request.get_json() or {}
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return error_response("Request pergerakan stok harus berupa objek JSON", 400)
     ingredient_id = data.get("ingredient_id")
-    movement_type = str(data.get("type", "ADJUSTMENT")).upper()
+    movement_type = data.get("type", "ADJUSTMENT")
+    if not isinstance(movement_type, str):
+        return error_response("Jenis pergerakan stok tidak valid", 400)
+    movement_type = movement_type.upper()
     try:
         quantity = Decimal(str(data.get("quantity", 0)))
     except (InvalidOperation, TypeError, ValueError):
         return error_response("Jumlah stok tidak valid", 400)
     notes = data.get("notes")
+    idempotency_key = _idempotency_key(data)
 
+    if not idempotency_key:
+        return error_response("idempotency_key wajib diisi (maksimal 64 karakter)", 400)
     if not ingredient_id or not quantity.is_finite() or quantity == Decimal("0"):
         return error_response("Bahan baku dan jumlah tidak boleh kosong atau 0", 400)
     if movement_type not in {"ADJUSTMENT", "WASTE"}:
         return error_response("Jenis pergerakan stok tidak valid", 400)
     if movement_type == "WASTE" and quantity > 0:
         return error_response("Jumlah waste harus negatif", 400)
+    if notes is not None and not isinstance(notes, str):
+        return error_response("Catatan pergerakan stok tidak valid", 400)
     if not Ingredient.query_active().filter_by(id=ingredient_id).first():
         return error_response("Bahan baku tidak ditemukan", 404)
 
-    movement = record_stock_movement(
-        ingredient_id=ingredient_id,
-        movement_type=movement_type,
-        quantity=quantity,
-        reference_type="MANUAL",
-        notes=notes
-    )
-    db.session.commit()
+    prior = StockMovement.query.filter_by(
+        idempotency_key=idempotency_key
+    ).first()
+    if prior:
+        if (
+            prior.ingredient_id != ingredient_id
+            or prior.type != movement_type
+            or prior.quantity != quantity
+            or prior.notes != notes
+        ):
+            return error_response("idempotency_key sudah digunakan untuk perubahan stok lain", 409)
+        return api_response({
+            "id": prior.id,
+            "balance_after": float(prior.balance_after)
+        }, "Pergerakan stok sudah dicatat (idempotent)")
+
+    try:
+        movement = record_stock_movement(
+            ingredient_id=ingredient_id,
+            movement_type=movement_type,
+            quantity=quantity,
+            reference_type="MANUAL",
+            notes=notes,
+            idempotency_key=idempotency_key,
+            created_by=get_jwt_identity()
+        )
+        db.session.commit()
+    except InsufficientStockError as error:
+        db.session.rollback()
+        return error_response(str(error), 409)
+    except IntegrityError:
+        db.session.rollback()
+        prior = StockMovement.query.filter_by(
+            idempotency_key=idempotency_key
+        ).first()
+        if not prior:
+            raise
+        if (
+            prior.ingredient_id != ingredient_id
+            or prior.type != movement_type
+            or prior.quantity != quantity
+            or prior.notes != notes
+        ):
+            return error_response("idempotency_key sudah digunakan untuk perubahan stok lain", 409)
+        return api_response({
+            "id": prior.id,
+            "balance_after": float(prior.balance_after)
+        }, "Pergerakan stok sudah dicatat (idempotent)")
     return api_response({
         "id": movement.id,
         "balance_after": float(movement.balance_after)
@@ -260,12 +345,28 @@ def create_stock_movement():
 @jwt_required()
 @role_required(ROLE_ADMIN, ROLE_SUPER_ADMIN)
 def record_opname():
-    data = request.get_json() or {}
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return error_response("Request opname harus berupa objek JSON", 400)
     items = data.get("items", [])
     notes = data.get("notes")
+    idempotency_key = _idempotency_key(data)
 
+    if not idempotency_key:
+        return error_response("idempotency_key wajib diisi (maksimal 64 karakter)", 400)
     if not isinstance(items, list) or not items:
         return error_response("Item opname wajib diisi", 400)
+    if notes is not None and not isinstance(notes, str):
+        return error_response("Catatan opname tidak valid", 400)
+
+    prior = StockOpname.query.filter_by(
+        idempotency_key=idempotency_key
+    ).first()
+    if prior:
+        return api_response(
+            {"id": prior.id, "opname_no": prior.opname_no},
+            "Stok opname sudah dicatat (idempotent)"
+        )
 
     normalized_items = []
     seen_ingredients = set()
@@ -286,8 +387,16 @@ def record_opname():
         seen_ingredients.add(ingredient_id)
         normalized_items.append((ingredient_id, actual_qty))
 
-    opname_no = f"OPN-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
-    opname = StockOpname(opname_no=opname_no, notes=notes)
+    opname_no = (
+        f"OPN-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-"
+        f"{uuid.uuid4().hex[:8]}"
+    )
+    opname = StockOpname(
+        opname_no=opname_no,
+        notes=notes,
+        idempotency_key=idempotency_key,
+        created_by=get_jwt_identity()
+    )
     db.session.add(opname)
     db.session.flush()
 
@@ -313,7 +422,9 @@ def record_opname():
                 quantity=diff,
                 reference_type="OPNAME",
                 reference_id=opname.id,
-                notes=f"Penyesuaian Opname #{opname.opname_no}"
+                notes=f"Penyesuaian Opname #{opname.opname_no}",
+                idempotency_key=_movement_key("opname", opname.id, ing_id),
+                created_by=get_jwt_identity()
             )
 
     db.session.commit()
@@ -326,11 +437,24 @@ def record_opname():
 @jwt_required()
 @role_required(ROLE_ADMIN, ROLE_SUPER_ADMIN)
 def create_purchase():
-    data = request.get_json() or {}
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return error_response("Request pembelian harus berupa objek JSON", 400)
     items = data.get("items", [])
+    idempotency_key = _idempotency_key(data)
 
+    if not idempotency_key:
+        return error_response("idempotency_key wajib diisi (maksimal 64 karakter)", 400)
     if not isinstance(items, list) or not items:
         return error_response("Item pembelian wajib diisi", 400)
+    prior = Purchase.query.filter_by(
+        idempotency_key=idempotency_key
+    ).first()
+    if prior:
+        return api_response(
+            {"id": prior.id, "total_amount": float(prior.total_amount)},
+            "Pembelian sudah dicatat (idempotent)"
+        )
 
     normalized_items = []
     total_amount = Decimal("0.00")
@@ -356,7 +480,9 @@ def create_purchase():
         invoice_no=data.get("invoice_no"),
         supplier_name=data.get("supplier_name"),
         total_amount=total_amount,
-        notes=data.get("notes")
+        notes=data.get("notes"),
+        idempotency_key=idempotency_key,
+        created_by=get_jwt_identity()
     )
     db.session.add(purchase)
     db.session.flush()
@@ -370,6 +496,7 @@ def create_purchase():
             subtotal=subtotal
         )
         db.session.add(p_item)
+        db.session.flush()
 
         # Update last purchase price in ingredient
         ingredient.last_purchase_price = unit_price
@@ -381,7 +508,9 @@ def create_purchase():
             quantity=qty,
             reference_type="PURCHASE",
             reference_id=purchase.id,
-            notes=f"Pembelian #{purchase.invoice_no or purchase.id}"
+            notes=f"Pembelian #{purchase.invoice_no or purchase.id}",
+            idempotency_key=_movement_key("purchase", purchase.id, p_item.id),
+            created_by=get_jwt_identity()
         )
 
     db.session.commit()

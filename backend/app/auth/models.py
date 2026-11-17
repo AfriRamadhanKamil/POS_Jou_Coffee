@@ -23,6 +23,7 @@ class Device(SyncBaseModel):
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
     device_id = Column(String(64), nullable=False, index=True)
     device_name = Column(String(100), nullable=True)
+    fcm_token = Column(String(4096), nullable=True)
     is_revoked = Column(Boolean, default=False, nullable=False)
     last_login_at = Column(DateTime, default=get_utc_now)
 
