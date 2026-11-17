@@ -42,6 +42,21 @@ XAMPP environment; tests use a separate in-memory SQLite database. Offline
 SQLite currently covers the cached POS catalog and pending POS transactions;
 management and online-only features still require a server connection.
 
+POS orders support item notes and order-level discounts by percentage or
+nominal amount. Discounts above the backend's default 10% approval threshold
+require an online Admin PIN verification; the server-configured threshold
+remains authoritative. The approval token is short-lived, so complete payment
+confirmation promptly after PIN verification.
+
+The login screen supports password and cashier PIN login and stores the API
+base URL in secure storage. After a successful online login, a salted PBKDF2-HMAC-SHA256 credential verifier is
+stored in secure storage for offline login on that device for up to seven days.
+Logging out removes the cached session and offline
+credential verifier but preserves unsynchronized orders. The account screen
+shows the active user and provides logout even when account data cannot be
+loaded. Socket.IO connections include the current JWT so the backend can
+authenticate cashier notifications; refreshed tokens reconnect the socket.
+
 Bluetooth ESC/POS receipt printing, QR generation for table setup, and
 Socket.IO notifications are wired into the app. iOS currently retries
 synchronization when the app returns to the foreground; periodic iOS background

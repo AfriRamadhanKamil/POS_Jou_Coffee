@@ -30,22 +30,50 @@ class AccountScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final data = ref.watch(accountDataProvider);
+    final session = ref.watch(authControllerProvider).session;
     return data.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (error, stackTrace) => _AccountError(
-        error: error,
-        onRetry: () => ref.invalidate(accountDataProvider),
+      error: (error, stackTrace) => Column(
+        children: [
+          if (session != null)
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: _ProfileCard(
+                name: session.name,
+                username: session.username,
+                role: session.role,
+                deviceId: session.deviceId,
+                isOffline: session.isOffline,
+              ),
+            ),
+          Expanded(
+            child: _AccountError(
+              error: error,
+              onRetry: () => ref.invalidate(accountDataProvider),
+            ),
+          ),
+        ],
       ),
       data: (account) => RefreshIndicator(
         onRefresh: () => ref.refresh(accountDataProvider.future),
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            if (session != null) ...[
+              _ProfileCard(
+                name: session.name,
+                username: session.username,
+                role: session.role,
+                deviceId: session.deviceId,
+                isOffline: session.isOffline,
+              ),
+              const SizedBox(height: 12),
+            ],
             Text(
               'Kas dan pengeluaran',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 12),
             _ShiftCard(
@@ -87,13 +115,16 @@ class AccountScreen extends ConsumerWidget {
                             child: Icon(Icons.receipt_long_outlined),
                           ),
                           title: Text(
-                            expense['category_name'] as String? ?? 'Pengeluaran',
+                            expense['category_name'] as String? ??
+                                'Pengeluaran',
                           ),
                           subtitle: Text(
                             expense['notes'] as String? ?? 'Tanpa catatan',
                           ),
                           trailing: Text(
-                            _rupiah((expense['amount'] as num?)?.toDouble() ?? 0),
+                            _rupiah(
+                              (expense['amount'] as num?)?.toDouble() ?? 0,
+                            ),
                           ),
                         ),
                     const Divider(),
@@ -112,6 +143,87 @@ class AccountScreen extends ConsumerWidget {
   }
 }
 
+class _ProfileCard extends ConsumerWidget {
+  const _ProfileCard({
+    required this.name,
+    required this.username,
+    required this.role,
+    required this.deviceId,
+    required this.isOffline,
+  });
+
+  final String name;
+  final String username;
+  final String role;
+  final String deviceId;
+  final bool isOffline;
+
+  Future<void> _logout(BuildContext context, WidgetRef ref) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Keluar dari akun?'),
+        content: const Text(
+          'Pesanan offline yang belum tersinkron tetap disimpan di perangkat.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Keluar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await ref.read(authControllerProvider.notifier).logout();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          const CircleAvatar(child: Icon(Icons.person_outline)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(name, style: Theme.of(context).textTheme.titleMedium),
+                Text('$username · ${_roleLabel(role)}'),
+                Text('Perangkat: $deviceId'),
+                if (isOffline)
+                  const Text(
+                    'Mode Offline',
+                    style: TextStyle(color: Colors.deepOrange),
+                  ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Keluar',
+            onPressed: () => _logout(context, ref),
+            icon: const Icon(Icons.logout),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+String _roleLabel(String role) => switch (role) {
+  'kasir' => 'Kasir',
+  'admin' => 'Admin',
+  'super_admin' => 'Super Admin',
+  _ => role,
+};
+
 class _ShiftCard extends ConsumerWidget {
   const _ShiftCard({required this.shift, required this.onChanged});
 
@@ -122,10 +234,9 @@ class _ShiftCard extends ConsumerWidget {
     final amount = await _askAmount(context, 'Modal awal shift');
     if (amount == null) return;
     try {
-      await ref.read(apiClientProvider).postData(
-        '/shifts/open',
-        body: {'starting_cash': amount},
-      );
+      await ref
+          .read(apiClientProvider)
+          .postData('/shifts/open', body: {'starting_cash': amount});
       onChanged();
     } on Exception catch (error) {
       if (context.mounted) _showError(context, apiErrorMessage(error));
@@ -138,10 +249,9 @@ class _ShiftCard extends ConsumerWidget {
     final amount = await _askAmount(context, 'Uang kas saat tutup shift');
     if (amount == null) return;
     try {
-      final result = await ref.read(apiClientProvider).postData(
-        '/shifts/$id/close',
-        body: {'ending_cash_actual': amount},
-      );
+      final result = await ref
+          .read(apiClientProvider)
+          .postData('/shifts/$id/close', body: {'ending_cash_actual': amount});
       onChanged();
       if (context.mounted) {
         showDialog<void>(
@@ -176,7 +286,10 @@ class _ShiftCard extends ConsumerWidget {
           controller: controller,
           autofocus: true,
           keyboardType: TextInputType.number,
-          decoration: const InputDecoration(labelText: 'Nominal', prefixText: 'Rp '),
+          decoration: const InputDecoration(
+            labelText: 'Nominal',
+            prefixText: 'Rp ',
+          ),
         ),
         actions: [
           TextButton(
@@ -207,15 +320,17 @@ class _ShiftCard extends ConsumerWidget {
     );
     if (movement == null) return;
     try {
-      await ref.read(apiClientProvider).postData(
-        '/cash-movements',
-        body: {
-          'shift_id': currentShiftId,
-          'type': movement.type,
-          'amount': movement.amount,
-          'notes': movement.notes,
-        },
-      );
+      await ref
+          .read(apiClientProvider)
+          .postData(
+            '/cash-movements',
+            body: {
+              'shift_id': currentShiftId,
+              'type': movement.type,
+              'amount': movement.amount,
+              'notes': movement.notes,
+            },
+          );
       onChanged();
     } on Exception catch (error) {
       if (context.mounted) _showError(context, apiErrorMessage(error));
@@ -341,7 +456,10 @@ class _CashMovementDialogState extends State<_CashMovementDialog> {
         TextField(
           controller: _amount,
           keyboardType: TextInputType.number,
-          decoration: const InputDecoration(labelText: 'Nominal', prefixText: 'Rp '),
+          decoration: const InputDecoration(
+            labelText: 'Nominal',
+            prefixText: 'Rp ',
+          ),
         ),
         const SizedBox(height: 12),
         TextField(
@@ -414,11 +532,11 @@ class _AccountError extends StatelessWidget {
 }
 
 void _showError(BuildContext context, String message) {
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(content: Text(message)),
-  );
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
 }
 
-String _rupiah(num amount) =>
-    NumberFormat.currency(locale: 'id_ID', symbol: 'Rp ', decimalDigits: 0)
-        .format(amount);
+String _rupiah(num amount) => NumberFormat.currency(
+  locale: 'id_ID',
+  symbol: 'Rp ',
+  decimalDigits: 0,
+).format(amount);

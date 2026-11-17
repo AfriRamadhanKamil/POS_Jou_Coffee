@@ -29,6 +29,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   final List<CartLine> _cart = [];
   String _search = '';
   String _orderType = 'DINE_IN';
+  String _discountMode = 'AMOUNT';
+  double _discountValue = 0;
   String? _selectedCategory;
   String? _selectedTableId;
   String? _selectedChannelId;
@@ -40,8 +42,15 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     super.dispose();
   }
 
-  double get _total =>
+  double get _subtotal =>
       _cart.fold(0, (total, line) => total + line.unitPrice * line.quantity);
+
+  double get _discountAmount => _discountMode == 'PERCENT'
+      ? _subtotal * _discountValue / 100
+      : _discountValue;
+
+  double get _total =>
+      (_subtotal - _discountAmount).clamp(0, _subtotal).toDouble();
 
   Future<void> _addProduct(
     MenuProduct product,
@@ -72,6 +81,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       (modifiers.map((item) => item.id).toList()..sort()).join(',');
 
   void _changeQuantity(int index, int amount) {
+    var discountCleared = false;
     setState(() {
       final next = _cart[index].quantity + amount;
       if (next <= 0) {
@@ -79,7 +89,111 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       } else {
         _cart[index] = _cart[index].withQuantity(next);
       }
+      if (_discountMode == 'AMOUNT' && _discountValue > _subtotal) {
+        _discountValue = 0;
+        discountCleared = true;
+      }
     });
+    if (discountCleared) {
+      _showMessage('Diskon nominal dihapus karena subtotal pesanan berubah.');
+    }
+  }
+
+  Future<void> _editNote(int index) async {
+    final controller = TextEditingController(text: _cart[index].notes ?? '');
+    final note = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Catatan item'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 200,
+          maxLines: 3,
+          decoration: const InputDecoration(hintText: 'Contoh: tanpa gula'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Simpan'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (note == null || !mounted) return;
+    setState(
+      () => _cart[index] = _cart[index].withNotes(note.isEmpty ? null : note),
+    );
+  }
+
+  Future<void> _editDiscount() async {
+    final selection = await showDialog<_DiscountSelection>(
+      context: context,
+      builder: (context) => _DiscountDialog(
+        subtotal: _subtotal,
+        mode: _discountMode,
+        value: _discountValue,
+      ),
+    );
+    if (selection == null || !mounted) return;
+    setState(() {
+      _discountMode = selection.mode;
+      _discountValue = selection.value;
+    });
+  }
+
+  Future<String?> _verifyAdminPin() async {
+    final controller = TextEditingController();
+    final pin = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Persetujuan PIN Admin'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          obscureText: true,
+          maxLength: 6,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(labelText: 'PIN Admin 6 digit'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (RegExp(r'^\d{6}$').hasMatch(controller.text)) {
+                Navigator.pop(context, controller.text);
+              }
+            },
+            child: const Text('Verifikasi'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (pin == null || !mounted) return null;
+    try {
+      final response = await ref
+          .read(apiClientProvider)
+          .postData('/auth/verify-pin', body: {'pin': pin, 'role': 'admin'});
+      final token = response['approval_token'];
+      if (token is! String || token.isEmpty) {
+        throw const FormatException(
+          'Server tidak mengembalikan token persetujuan.',
+        );
+      }
+      return token;
+    } on Exception catch (error) {
+      if (mounted) _showMessage('Persetujuan gagal: ${apiErrorMessage(error)}');
+      return null;
+    }
   }
 
   Future<void> _checkout() async {
@@ -96,6 +210,18 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         _externalOrderController.text.trim().isEmpty) {
       _showMessage('ID pesanan platform wajib diisi.');
       return;
+    }
+
+    String? discountApprovalToken;
+    if (_discountAmount > _subtotal * 0.1) {
+      if (ref.read(connectivityStatusProvider).asData?.value == false) {
+        _showMessage(
+          'Diskon di atas 10% memerlukan verifikasi online PIN Admin.',
+        );
+        return;
+      }
+      discountApprovalToken = await _verifyAdminPin();
+      if (discountApprovalToken == null || !mounted) return;
     }
 
     final selection = await showDialog<_PaymentSelection>(
@@ -121,6 +247,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       },
       'is_paid': true,
       'total': _total,
+      'discount': _discountAmount,
+      'discount_approval_token': ?discountApprovalToken,
       'items': [
         for (final line in _cart)
           {
@@ -131,6 +259,8 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                 line.menu.price + (line.variant?.priceAdjustment ?? 0),
             if (line.variant != null) 'variant_id': line.variant!.id,
             'discount': 0,
+            if (line.notes != null && line.notes!.isNotEmpty)
+              'notes': line.notes,
             'modifiers': [
               for (final modifier in line.modifiers)
                 {
@@ -157,6 +287,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       setState(() {
         _cart.clear();
         _externalOrderController.clear();
+        _discountValue = 0;
       });
       await _showOrderComplete(order, purchasedItems);
     } on Exception catch (error) {
@@ -387,7 +518,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                 ),
                 if (_cart.isNotEmpty)
                   TextButton(
-                    onPressed: () => setState(_cart.clear),
+                    onPressed: () => setState(() {
+                      _cart.clear();
+                      _discountValue = 0;
+                    }),
                     child: const Text('Kosongkan'),
                   ),
               ],
@@ -491,10 +625,12 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                           [
                             if (line.variant != null) line.variant!.name,
                             ...line.modifiers.map((item) => item.name),
+                            if (line.notes != null) 'Catatan: ${line.notes}',
                           ].join(' · '),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
+                        onTap: () => _editNote(index),
                         trailing: SizedBox(
                           width: 120,
                           child: Row(
@@ -523,6 +659,28 @@ class _PosScreenState extends ConsumerState<PosScreen> {
             padding: const EdgeInsets.all(14),
             child: Column(
               children: [
+                Row(
+                  children: [
+                    const Expanded(child: Text('Subtotal')),
+                    Text(_rupiah(_subtotal)),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextButton.icon(
+                        onPressed: _cart.isEmpty ? null : _editDiscount,
+                        icon: const Icon(Icons.discount_outlined),
+                        label: Text(
+                          _discountAmount > 0
+                              ? 'Diskon ${_discountMode == 'PERCENT' ? '${_discountValue.toStringAsFixed(1)}%' : ''}'
+                              : 'Tambah diskon',
+                        ),
+                      ),
+                    ),
+                    Text('-${_rupiah(_discountAmount)}'),
+                  ],
+                ),
                 Row(
                   children: [
                     const Expanded(child: Text('Total')),
@@ -866,6 +1024,127 @@ class _PaymentSelection {
 
   final String method;
   final double amount;
+}
+
+class _DiscountSelection {
+  const _DiscountSelection(this.mode, this.value);
+
+  final String mode;
+  final double value;
+}
+
+class _DiscountDialog extends StatefulWidget {
+  const _DiscountDialog({
+    required this.subtotal,
+    required this.mode,
+    required this.value,
+  });
+
+  final double subtotal;
+  final String mode;
+  final double value;
+
+  @override
+  State<_DiscountDialog> createState() => _DiscountDialogState();
+}
+
+class _DiscountDialogState extends State<_DiscountDialog> {
+  late final TextEditingController _valueController;
+  late String _mode;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _mode = widget.mode;
+    _valueController = TextEditingController(
+      text: widget.value == 0 ? '' : widget.value.toStringAsFixed(2),
+    );
+  }
+
+  @override
+  void dispose() {
+    _valueController.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final value = double.tryParse(
+      _valueController.text.trim().replaceAll(',', '.'),
+    );
+    if (value == null || value < 0) {
+      setState(() => _error = 'Masukkan nilai diskon yang valid.');
+      return;
+    }
+    if (_mode == 'PERCENT' && value > 100) {
+      setState(() => _error = 'Persentase diskon maksimal 100%.');
+      return;
+    }
+    if (_mode == 'AMOUNT' && value > widget.subtotal) {
+      setState(() => _error = 'Diskon tidak boleh melebihi subtotal.');
+      return;
+    }
+    Navigator.pop(context, _DiscountSelection(_mode, value));
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Diskon pesanan'),
+    content: SizedBox(
+      width: 360,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(value: 'AMOUNT', label: Text('Nominal')),
+              ButtonSegment(value: 'PERCENT', label: Text('Persentase')),
+            ],
+            selected: {_mode},
+            onSelectionChanged: (value) => setState(() {
+              _mode = value.first;
+              _error = null;
+            }),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _valueController,
+            autofocus: true,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: InputDecoration(
+              labelText: _mode == 'PERCENT'
+                  ? 'Persentase diskon'
+                  : 'Nominal diskon',
+              prefixText: _mode == 'PERCENT' ? null : 'Rp ',
+              suffixText: _mode == 'PERCENT' ? '%' : null,
+            ),
+          ),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ),
+        ],
+      ),
+    ),
+    actions: [
+      if (widget.value > 0)
+        TextButton(
+          onPressed: () =>
+              Navigator.pop(context, const _DiscountSelection('AMOUNT', 0)),
+          child: const Text('Hapus diskon'),
+        ),
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Batal'),
+      ),
+      FilledButton(onPressed: _save, child: const Text('Simpan')),
+    ],
+  );
 }
 
 class _PaymentDialog extends StatefulWidget {
