@@ -17,6 +17,7 @@ void backgroundSyncDispatcher() {
     final database = AppDatabase();
     try {
       const storage = FlutterSecureStorage();
+      final baseUrl = await storage.read(key: 'jou_api_base_url');
       final sessionJson = await storage.read(key: 'jou_session');
       if (sessionJson == null) return true;
       final session = jsonDecode(sessionJson) as Map<String, dynamic>;
@@ -25,7 +26,9 @@ void backgroundSyncDispatcher() {
       if (accessToken is! String || refreshToken is! String) {
         throw const FormatException('Sesi tersimpan tidak berisi token valid.');
       }
-      final api = ApiClient()..setSession(accessToken, refreshToken);
+      final api = ApiClient();
+      if (baseUrl != null) api.setBaseUrl(baseUrl);
+      api.setSession(accessToken, refreshToken);
       await PosRepository(api, database).syncPendingOrders();
       return true;
     } on Exception catch (error, stackTrace) {

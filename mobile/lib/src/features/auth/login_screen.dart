@@ -14,21 +14,61 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _serverController = TextEditingController();
+  bool _usePin = false;
   bool _obscurePassword = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _serverController.text = ref.read(apiClientProvider).dio.options.baseUrl;
+  }
 
   @override
   void dispose() {
     _usernameController.dispose();
     _passwordController.dispose();
+    _serverController.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
-    await ref.read(authControllerProvider.notifier).login(
-      _usernameController.text,
-      _passwordController.text,
+    try {
+      await ref
+          .read(authControllerProvider.notifier)
+          .setServerUrl(_serverController.text);
+    } on FormatException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+      return;
+    }
+    await ref
+        .read(authControllerProvider.notifier)
+        .login(
+          _usePin ? 'kasir' : _usernameController.text,
+          _passwordController.text,
+          isPin: _usePin,
+        );
+  }
+
+  void _enterPin(String digit) {
+    final current = _passwordController.text;
+    if (digit == 'hapus') {
+      if (current.isNotEmpty) {
+        _passwordController.text = current.substring(0, current.length - 1);
+      }
+    } else if (digit == 'bersihkan') {
+      _passwordController.clear();
+    } else if (current.length < 6) {
+      _passwordController.text = '$current$digit';
+    }
+    _passwordController.selection = TextSelection.collapsed(
+      offset: _passwordController.text.length,
     );
+    setState(() {});
   }
 
   @override
@@ -77,42 +117,155 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         ),
                         const SizedBox(height: 28),
                         TextFormField(
-                          controller: _usernameController,
+                          controller: _serverController,
+                          keyboardType: TextInputType.url,
                           textInputAction: TextInputAction.next,
-                          autofillHints: const [AutofillHints.username],
                           decoration: const InputDecoration(
-                            labelText: 'Username',
-                            prefixIcon: Icon(Icons.person_outline),
+                            labelText: 'Alamat server',
+                            hintText: 'https://server.example.com/api/v1',
+                            prefixIcon: Icon(Icons.dns_outlined),
                           ),
-                          validator: (value) => value == null || value.trim().isEmpty
-                              ? 'Username wajib diisi.'
+                          validator: (value) =>
+                              value == null || value.trim().isEmpty
+                              ? 'Alamat server wajib diisi.'
                               : null,
                         ),
                         const SizedBox(height: 14),
-                        TextFormField(
-                          controller: _passwordController,
-                          obscureText: _obscurePassword,
-                          textInputAction: TextInputAction.done,
-                          autofillHints: const [AutofillHints.password],
-                          onFieldSubmitted: (_) => _submit(),
-                          decoration: InputDecoration(
-                            labelText: 'Password',
-                            prefixIcon: const Icon(Icons.lock_outline),
-                            suffixIcon: IconButton(
-                              onPressed: () => setState(
-                                () => _obscurePassword = !_obscurePassword,
-                              ),
-                              icon: Icon(
-                                _obscurePassword
-                                    ? Icons.visibility_outlined
-                                    : Icons.visibility_off_outlined,
-                              ),
+                        SegmentedButton<bool>(
+                          segments: const [
+                            ButtonSegment(
+                              value: false,
+                              label: Text('Password'),
+                              icon: Icon(Icons.lock_outline),
+                            ),
+                            ButtonSegment(
+                              value: true,
+                              label: Text('PIN Kasir'),
+                              icon: Icon(Icons.dialpad_outlined),
+                            ),
+                          ],
+                          selected: {_usePin},
+                          onSelectionChanged: (selection) {
+                            setState(() {
+                              _usePin = selection.first;
+                              if (_usePin) {
+                                _usernameController.text = 'kasir';
+                              }
+                              _passwordController.clear();
+                            });
+                          },
+                        ),
+                        const SizedBox(height: 14),
+                        if (!_usePin)
+                          TextFormField(
+                            controller: _usernameController,
+                            textInputAction: TextInputAction.next,
+                            autofillHints: const [AutofillHints.username],
+                            decoration: const InputDecoration(
+                              labelText: 'Username',
+                              prefixIcon: Icon(Icons.person_outline),
+                            ),
+                            validator: (value) =>
+                                value == null || value.trim().isEmpty
+                                ? 'Username wajib diisi.'
+                                : null,
+                          )
+                        else
+                          TextFormField(
+                            initialValue: 'kasir',
+                            readOnly: true,
+                            decoration: const InputDecoration(
+                              labelText: 'Username kasir',
+                              prefixIcon: Icon(Icons.person_outline),
                             ),
                           ),
-                          validator: (value) => value == null || value.isEmpty
-                              ? 'Password wajib diisi.'
-                              : null,
+                        const SizedBox(height: 14),
+                        TextFormField(
+                          controller: _passwordController,
+                          obscureText: _usePin || _obscurePassword,
+                          maxLength: _usePin ? 6 : null,
+                          readOnly: _usePin,
+                          keyboardType: _usePin
+                              ? TextInputType.number
+                              : TextInputType.text,
+                          autofillHints: _usePin
+                              ? null
+                              : const [AutofillHints.password],
+                          textInputAction: TextInputAction.done,
+                          onFieldSubmitted: (_) => _submit(),
+                          decoration: InputDecoration(
+                            labelText: _usePin ? 'PIN 6 digit' : 'Password',
+                            prefixIcon: Icon(
+                              _usePin
+                                  ? Icons.dialpad_outlined
+                                  : Icons.lock_outline,
+                            ),
+                            counterText: _usePin ? '' : null,
+                            suffixIcon: _usePin
+                                ? null
+                                : IconButton(
+                                    onPressed: () => setState(
+                                      () =>
+                                          _obscurePassword = !_obscurePassword,
+                                    ),
+                                    icon: Icon(
+                                      _obscurePassword
+                                          ? Icons.visibility_outlined
+                                          : Icons.visibility_off_outlined,
+                                    ),
+                                  ),
+                          ),
+                          validator: (value) {
+                            if (value == null || value.isEmpty) {
+                              return _usePin
+                                  ? 'PIN wajib diisi.'
+                                  : 'Password wajib diisi.';
+                            }
+                            if (_usePin &&
+                                (value.length != 6 ||
+                                    !RegExp(r'^\d{6}$').hasMatch(value))) {
+                              return 'PIN harus terdiri dari 6 digit.';
+                            }
+                            return null;
+                          },
                         ),
+                        if (_usePin) ...[
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            height: 190,
+                            child: GridView.count(
+                              physics: const NeverScrollableScrollPhysics(),
+                              crossAxisCount: 3,
+                              mainAxisSpacing: 6,
+                              crossAxisSpacing: 6,
+                              childAspectRatio: 2.6,
+                              children: [
+                                for (final digit in const [
+                                  '1',
+                                  '2',
+                                  '3',
+                                  '4',
+                                  '5',
+                                  '6',
+                                  '7',
+                                  '8',
+                                  '9',
+                                  'bersihkan',
+                                  '0',
+                                  'hapus',
+                                ])
+                                  OutlinedButton(
+                                    onPressed: () => _enterPin(digit),
+                                    child: digit == 'hapus'
+                                        ? const Icon(Icons.backspace_outlined)
+                                        : digit == 'bersihkan'
+                                        ? const Text('Hapus semua')
+                                        : Text(digit),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ],
                         if (auth.error != null) ...[
                           const SizedBox(height: 14),
                           Text(
@@ -139,11 +292,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         ),
                         const SizedBox(height: 14),
                         Text(
-                          'Pastikan perangkat terhubung ke server untuk masuk.',
+                          'Jika pernah login online di perangkat ini, login offline tersedia hingga 7 hari.',
                           textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: colors.onSurfaceVariant,
-                          ),
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: colors.onSurfaceVariant),
                         ),
                       ],
                     ),

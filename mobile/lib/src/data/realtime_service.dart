@@ -3,11 +3,7 @@ import 'dart:async';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
 class RealtimeEvent {
-  const RealtimeEvent({
-    required this.name,
-    this.payload,
-    this.connected,
-  });
+  const RealtimeEvent({required this.name, this.payload, this.connected});
 
   final String name;
   final Object? payload;
@@ -15,11 +11,12 @@ class RealtimeEvent {
 }
 
 class RealtimeService {
-  RealtimeService(String serverOrigin) {
+  RealtimeService(String serverOrigin, {required String accessToken}) {
     _socket = io.io(
       '$serverOrigin/ws',
       io.OptionBuilder()
           .setTransports(['websocket'])
+          .setAuth({'token': accessToken})
           .disableAutoConnect()
           .build(),
     );
@@ -57,6 +54,12 @@ class RealtimeService {
   late final io.Socket _socket;
 
   Stream<RealtimeEvent> get events => _events.stream;
+
+  void updateAccessToken(String accessToken) {
+    _socket.auth = {'token': accessToken};
+    _socket.disconnect();
+    _socket.connect();
+  }
 
   Future<void> dispose() async {
     _socket.dispose();

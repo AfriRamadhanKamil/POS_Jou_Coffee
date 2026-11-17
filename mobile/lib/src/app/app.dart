@@ -14,6 +14,7 @@ import '../features/reports/reports_screen.dart';
 import '../data/api/api_client.dart';
 import '../data/realtime_service.dart';
 import 'providers.dart';
+import 'session_controller.dart';
 import 'state_providers.dart';
 
 final backgroundSyncSetupErrorProvider = Provider<String?>((ref) => null);
@@ -136,6 +137,7 @@ class _AppShellState extends ConsumerState<AppShell>
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   StreamSubscription<RealtimeEvent>? _realtimeSubscription;
   RealtimeService? _realtimeService;
+  ProviderSubscription<AppSession?>? _sessionSubscription;
   bool _realtimeConnected = false;
 
   static const _allDestinations = [
@@ -157,14 +159,28 @@ class _AppShellState extends ConsumerState<AppShell>
         unawaited(_syncPendingOrders(showResult: false));
       }
     });
+    _sessionSubscription = ref.listenManual(
+      authControllerProvider.select((state) => state.session),
+      (previous, next) {
+        final token = next?.accessToken;
+        if (token != null && token.isNotEmpty) {
+          _realtimeService?.updateAccessToken(token);
+        }
+      },
+    );
     Future.microtask(_connectRealtime);
     Future.microtask(() => _syncPendingOrders(showResult: false));
   }
 
   void _connectRealtime() {
+    final session = ref.read(authControllerProvider).session;
+    if (session == null || session.isOffline) return;
     final baseUrl = ref.read(apiClientProvider).dio.options.baseUrl;
     final uri = Uri.parse(baseUrl);
-    final service = RealtimeService('${uri.scheme}://${uri.authority}');
+    final service = RealtimeService(
+      '${uri.scheme}://${uri.authority}',
+      accessToken: session.accessToken,
+    );
     _realtimeService = service;
     _realtimeSubscription = service.events.listen((event) {
       if (!mounted) return;
@@ -199,6 +215,7 @@ class _AppShellState extends ConsumerState<AppShell>
     WidgetsBinding.instance.removeObserver(this);
     _connectivitySubscription?.cancel();
     _realtimeSubscription?.cancel();
+    _sessionSubscription?.close();
     _realtimeService?.dispose();
     super.dispose();
   }

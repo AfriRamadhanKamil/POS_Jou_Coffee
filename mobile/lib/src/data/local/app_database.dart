@@ -36,9 +36,14 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<String?> readCachedCatalog() async {
-    final row = await (select(cachedCatalogs)..where((table) => table.id.equals(1)))
-        .getSingleOrNull();
+    final row = await (select(
+      cachedCatalogs,
+    )..where((table) => table.id.equals(1))).getSingleOrNull();
     return row?.payload;
+  }
+
+  Future<void> clearCachedCatalog() {
+    return delete(cachedCatalogs).go();
   }
 
   Future<void> enqueueOrder(String key, String payload) {
@@ -53,24 +58,26 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Stream<List<PendingOrder>> watchPendingOrders() {
-    return (select(pendingOrders)
-          ..orderBy([(table) => OrderingTerm.asc(table.createdAt)]))
-        .watch();
+    return (select(
+      pendingOrders,
+    )..orderBy([(table) => OrderingTerm.asc(table.createdAt)])).watch();
   }
 
   Future<List<PendingOrder>> getPendingOrders() {
-    return (select(pendingOrders)
-          ..orderBy([(table) => OrderingTerm.asc(table.createdAt)]))
-        .get();
+    return (select(
+      pendingOrders,
+    )..orderBy([(table) => OrderingTerm.asc(table.createdAt)])).get();
   }
 
   Future<void> removePendingOrder(String key) {
-    return (delete(pendingOrders)..where((table) => table.idempotencyKey.equals(key)))
-        .go();
+    return (delete(
+      pendingOrders,
+    )..where((table) => table.idempotencyKey.equals(key))).go();
   }
 
   Future<void> setPendingOrderError(String key, String error) {
-    return (update(pendingOrders)..where((table) => table.idempotencyKey.equals(key)))
+    return (update(pendingOrders)
+          ..where((table) => table.idempotencyKey.equals(key)))
         .write(PendingOrdersCompanion(lastError: Value(error)));
   }
 }

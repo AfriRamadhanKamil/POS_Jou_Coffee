@@ -48,7 +48,9 @@ class PosRepository {
       }
       final key = payload['idempotency_key'];
       if (key is! String || key.isEmpty) {
-        throw const FormatException('Pesanan offline membutuhkan idempotency key.');
+        throw const FormatException(
+          'Pesanan offline membutuhkan idempotency key.',
+        );
       }
       await _database.enqueueOrder(key, jsonEncode(payload));
       return CreatedOrder(
@@ -301,12 +303,14 @@ class CartLine {
     required this.variant,
     required this.modifiers,
     required this.quantity,
+    this.notes,
   });
 
   final MenuProduct menu;
   final MenuVariant? variant;
   final List<MenuModifier> modifiers;
   final int quantity;
+  final String? notes;
 
   double get unitPrice =>
       menu.price +
@@ -318,5 +322,14 @@ class CartLine {
     variant: variant,
     modifiers: modifiers,
     quantity: value,
+    notes: notes,
+  );
+
+  CartLine withNotes(String? value) => CartLine(
+    menu: menu,
+    variant: variant,
+    modifiers: modifiers,
+    quantity: quantity,
+    notes: value,
   );
 }

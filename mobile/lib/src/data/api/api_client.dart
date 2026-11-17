@@ -1,13 +1,10 @@
 import 'package:dio/dio.dart';
 
 class ApiClient {
-  ApiClient()
+  ApiClient({String? baseUrl})
     : dio = Dio(
         BaseOptions(
-          baseUrl: const String.fromEnvironment(
-            'API_BASE_URL',
-            defaultValue: 'http://10.0.2.2:5000/api/v1',
-          ),
+          baseUrl: baseUrl ?? defaultBaseUrl,
           connectTimeout: const Duration(seconds: 10),
           receiveTimeout: const Duration(seconds: 15),
           headers: const {'Content-Type': 'application/json'},
@@ -15,10 +12,7 @@ class ApiClient {
       ),
       _refreshDio = Dio(
         BaseOptions(
-          baseUrl: const String.fromEnvironment(
-            'API_BASE_URL',
-            defaultValue: 'http://10.0.2.2:5000/api/v1',
-          ),
+          baseUrl: baseUrl ?? defaultBaseUrl,
           connectTimeout: const Duration(seconds: 10),
           receiveTimeout: const Duration(seconds: 15),
           headers: const {'Content-Type': 'application/json'},
@@ -42,14 +36,14 @@ class ApiClient {
               ),
             );
             final payload = response.data?['data'];
-            final accessToken = payload is Map
-                ? payload['access_token']
-                : null;
+            final accessToken = payload is Map ? payload['access_token'] : null;
             if (accessToken is! String || accessToken.isEmpty) {
+              await onSessionExpired?.call();
               handler.next(error);
               return;
             }
             setSession(accessToken, _refreshToken);
+            await onAccessTokenRefreshed?.call(accessToken);
             final request = error.requestOptions
               ..headers['Authorization'] = 'Bearer $accessToken'
               ..extra['retried'] = true;
@@ -57,6 +51,8 @@ class ApiClient {
           } on DioException catch (refreshError) {
             if (refreshError.response == null) {
               error.requestOptions.extra['refreshUnavailable'] = true;
+            } else if (refreshError.response?.statusCode == 401) {
+              await onSessionExpired?.call();
             }
             handler.next(error);
           }
@@ -67,8 +63,18 @@ class ApiClient {
 
   final Dio dio;
   final Dio _refreshDio;
+  static const defaultBaseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: 'http://10.0.2.2:5000/api/v1',
+  );
   String? _refreshToken;
   Future<void> Function(String accessToken)? onAccessTokenRefreshed;
+  Future<void> Function()? onSessionExpired;
+
+  void setBaseUrl(String baseUrl) {
+    dio.options.baseUrl = baseUrl;
+    _refreshDio.options.baseUrl = baseUrl;
+  }
 
   void setSession(String? accessToken, String? refreshToken) {
     _refreshToken = refreshToken;
@@ -81,9 +87,7 @@ class ApiClient {
   Future<String> refreshAccessToken(String refreshToken) async {
     final response = await _refreshDio.post<Object?>(
       '/auth/refresh',
-      options: Options(
-        headers: {'Authorization': 'Bearer $refreshToken'},
-      ),
+      options: Options(headers: {'Authorization': 'Bearer $refreshToken'}),
     );
     final body = response.data;
     if (body is! Map<String, dynamic> || body['success'] != true) {
@@ -108,7 +112,9 @@ class ApiClient {
     }
     if (body['success'] == false) {
       throw ApiException(
-        body['message'] is String ? body['message'] as String : 'Permintaan gagal.',
+        body['message'] is String
+            ? body['message'] as String
+            : 'Permintaan gagal.',
         response.statusCode,
       );
     }
@@ -118,7 +124,10 @@ class ApiClient {
     return <String, dynamic>{};
   }
 
-  Future<Map<String, dynamic>> getData(String path, {Map<String, Object?>? query}) async {
+  Future<Map<String, dynamic>> getData(
+    String path, {
+    Map<String, Object?>? query,
+  }) async {
     return unwrap(await dio.get<Object?>(path, queryParameters: query));
   }
 
