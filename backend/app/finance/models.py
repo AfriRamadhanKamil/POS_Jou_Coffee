@@ -20,6 +20,7 @@ class Expense(SyncBaseModel):
     amount = Column(Numeric(15, 2), nullable=False)
     notes = Column(Text, nullable=True)
     receipt_image_url = Column(String(255), nullable=True)
+    idempotency_key = Column(String(64), unique=True, nullable=True, index=True)
     expense_date = Column(DateTime, default=get_utc_now, nullable=False)
     shift_id = Column(String(36), ForeignKey("cash_shifts.id"), nullable=True, index=True)
 
@@ -39,6 +40,8 @@ class CashShift(SyncBaseModel):
     ending_cash_actual = Column(Numeric(15, 2), default=0.00, nullable=False)
     cash_difference = Column(Numeric(15, 2), default=0.00, nullable=False)  # actual - expected
     status = Column(String(20), default="OPEN", nullable=False)  # OPEN, CLOSED
+    idempotency_key = Column(String(64), unique=True, nullable=True, index=True)
+    close_idempotency_key = Column(String(64), unique=True, nullable=True, index=True)
 
     user = relationship("app.auth.models.User")
     movements = relationship("CashMovement", back_populates="shift", cascade="all, delete-orphan")
@@ -52,6 +55,7 @@ class CashMovement(SyncBaseModel):
     type = Column(String(20), nullable=False)  # CASH_IN, CASH_OUT
     amount = Column(Numeric(15, 2), nullable=False)
     notes = Column(Text, nullable=True)
+    idempotency_key = Column(String(64), unique=True, nullable=True, index=True)
 
     shift = relationship("CashShift", back_populates="movements")
 

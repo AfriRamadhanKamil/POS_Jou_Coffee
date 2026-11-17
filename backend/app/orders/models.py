@@ -1,4 +1,7 @@
-from sqlalchemy import Column, String, Boolean, Numeric, Text, ForeignKey, DateTime
+from sqlalchemy import (
+    Column, String, Boolean, Numeric, Text, ForeignKey, DateTime,
+    UniqueConstraint
+)
 from sqlalchemy.orm import relationship
 from app.extensions import db
 from app.common.models import SyncBaseModel, get_utc_now
@@ -42,6 +45,13 @@ class Table(SyncBaseModel):
 
 class Order(SyncBaseModel):
     __tablename__ = "orders"
+    __table_args__ = (
+        UniqueConstraint(
+            "channel_id",
+            "external_order_id",
+            name="uq_order_channel_external_id"
+        ),
+    )
 
     order_no = Column(String(50), unique=True, nullable=False, index=True)
     source = Column(String(30), default=SOURCE_POS, nullable=False)  # POS, QR, ONLINE_PLATFORM
@@ -112,6 +122,7 @@ class Payment(SyncBaseModel):
     status = Column(String(20), default=PAYMENT_PAID, nullable=False)  # PAID, REFUNDED
     provider = Column(String(50), nullable=True)  # e.g., midtrans, xendit, doku
     provider_ref = Column(String(100), nullable=True, index=True)
+    idempotency_key = Column(String(64), unique=True, nullable=True, index=True)
     paid_at = Column(DateTime, default=get_utc_now)
     raw_webhook = Column(Text, nullable=True)
 

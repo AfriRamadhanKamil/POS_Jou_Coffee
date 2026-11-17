@@ -24,6 +24,15 @@ class Config:
 
     # Redis
     REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
+    RATELIMIT_STORAGE_URI = os.getenv("RATELIMIT_STORAGE_URI", "memory://")
+    QR_ORDER_RATE_LIMIT = os.getenv("QR_ORDER_RATE_LIMIT", "10 per minute")
+    QR_ORDER_TABLE_RATE_LIMIT = os.getenv("QR_ORDER_TABLE_RATE_LIMIT", "60 per minute")
+    AUTH_LOGIN_RATE_LIMIT = os.getenv("AUTH_LOGIN_RATE_LIMIT", "10 per minute")
+    AUTH_PIN_RATE_LIMIT = os.getenv("AUTH_PIN_RATE_LIMIT", "5 per minute")
+    CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
+    SENTRY_DSN = os.getenv("SENTRY_DSN", "")
+    SENTRY_ENVIRONMENT = os.getenv("SENTRY_ENVIRONMENT", os.getenv("FLASK_ENV", "development"))
+    FCM_SERVICE_ACCOUNT_FILE = os.getenv("FCM_SERVICE_ACCOUNT_FILE", "")
 
     # JWT
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "jou-jwt-dev-secret-key-change-in-production")
@@ -38,6 +47,7 @@ class Config:
     QR_HMAC_SECRET = os.getenv("QR_HMAC_SECRET", "table-qr-signed-secret-change-in-prod")
     MAX_ACTIVE_DEVICES_PER_USER = int(os.getenv("MAX_ACTIVE_DEVICES_PER_USER", "3"))
     OFFLINE_SESSION_MAX_DAYS = int(os.getenv("OFFLINE_SESSION_MAX_DAYS", "7"))
+    MAX_ORDER_DISCOUNT_PERCENT = float(os.getenv("MAX_ORDER_DISCOUNT_PERCENT", "10"))
 
     # Payment Gateway
     PAYMENT_GATEWAY_PROVIDER = os.getenv("PAYMENT_GATEWAY_PROVIDER", "midtrans")
@@ -65,6 +75,10 @@ class TestingConfig(Config):
 
 class ProductionConfig(Config):
     DEBUG = False
+    RATELIMIT_STORAGE_URI = os.getenv(
+        "RATELIMIT_STORAGE_URI",
+        os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
+    )
 
 
 config_by_name = {

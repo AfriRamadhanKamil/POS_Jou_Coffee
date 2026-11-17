@@ -11,6 +11,8 @@ Backend REST API & Realtime WebSocket service untuk **Jou Coffee POS**, dirancan
 - **ORM & Migrations:** SQLAlchemy 2.0 & Alembic / Flask-Migrate
 - **Authentication:** Flask-JWT-Extended (15-min access token, refresh token, role claims)
 - **Realtime:** Flask-SocketIO (WebSocket dengan Redis pub/sub)
+- **Rate Limiting:** Flask-Limiter (Redis pada production)
+- **Push Notification:** Firebase Cloud Messaging (opsional; service account dari environment)
 - **Password & PIN Hash:** Argon2 / Scrypt (Werkzeug Security)
 - **Server:** Gunicorn (gevent worker) + Nginx
 
@@ -73,14 +75,32 @@ Untuk database lokal dengan XAMPP:
    ```
    Jika Anda telah menetapkan password untuk akun `root`, masukkan password tersebut setelah `root:`. Jangan jalankan MySQL Docker bersamaan pada port yang sama.
 
-Seeder dan server development memakai `DATABASE_URL` tersebut. Seeder membuat tabel aplikasi, tetapi database `jou_coffee` harus dibuat terlebih dahulu melalui phpMyAdmin. Backend memakai SQLite in-memory saat menjalankan pengujian; database SQLite ini terpisah dari SQLite persisten pada perangkat Flutter.
+Seeder dan server development memakai `DATABASE_URL` tersebut. Buat database `jou_coffee` terlebih dahulu melalui phpMyAdmin, lalu gunakan Flask-Migrate untuk membuat atau memperbarui tabel aplikasi. Backend memakai SQLite in-memory saat menjalankan pengujian; database SQLite ini terpisah dari SQLite persisten pada perangkat Flutter.
+
+Untuk menerapkan migrasi dari folder utama repository:
+```powershell
+Push-Location .\backend
+python -m flask --app app:create_app db upgrade
+Pop-Location
+```
+
+Setelah mengubah model, buat migrasi baru, tinjau file yang dihasilkan, lalu terapkan:
+```powershell
+Push-Location .\backend
+python -m flask --app app:create_app db migrate -m "Describe schema change"
+python -m flask --app app:create_app db upgrade
+Pop-Location
+```
 
 ### Menjalankan Backend agar Bisa Diakses HP Fisik
 
 1. Pastikan MySQL XAMPP aktif dan database `jou_coffee` sudah dibuat.
-2. Dari folder utama repository, aktifkan virtual environment dan buat tabel/data awal jika belum:
+2. Dari folder utama repository, aktifkan virtual environment, terapkan migrasi, lalu isi data awal:
    ```powershell
    .\venv\Scripts\Activate.ps1
+   Push-Location .\backend
+   python -m flask --app app:create_app db upgrade
+   Pop-Location
    python .\backend\seed.py
    ```
 3. Jalankan server:
@@ -110,7 +130,9 @@ Untuk development satu server, Redis tidak wajib: Socket.IO berjalan dalam prose
 
 Backend lokal memakai Flask development server dan HTTP; jalankan hanya pada jaringan privat yang dipercaya. Kredensial contoh Midtrans pada `.env.example` bukan kredensial aktif. Pembayaran QRIS baru dapat dites setelah server key sandbox yang valid dikonfigurasi; jangan gunakan konfigurasi ini sebagai deployment production.
 
-Production menolak konfigurasi yang tidak memiliki `DATABASE_URL` MySQL, `REDIS_URL`, `SECRET_KEY`, `JWT_SECRET_KEY`, `QR_HMAC_SECRET`, dan `PAYMENT_GATEWAY_SERVER_KEY`. Secret aplikasi harus memiliki sedikitnya 32 karakter. Gunakan kredensial merchant Midtrans yang sesuai dengan environment dan simpan seluruh secret di environment/server secret manager, bukan di repository.
+Production menolak konfigurasi yang tidak memiliki `DATABASE_URL` MySQL, `REDIS_URL`, `SECRET_KEY`, `JWT_SECRET_KEY`, `QR_HMAC_SECRET`, `PAYMENT_GATEWAY_SERVER_KEY`, dan `CORS_ORIGINS` khusus HTTPS. Rate limiting endpoint QR dan autentikasi menggunakan Redis production (`RATELIMIT_STORAGE_URI` dapat digunakan untuk override `REDIS_URL`). Secret aplikasi harus memiliki sedikitnya 32 karakter. HTTPS diasumsikan berakhir di satu reverse proxy tepercaya. Header keamanan ditambahkan ke respons; Sentry aktif bila `SENTRY_DSN` diatur. Simpan seluruh secret di environment/server secret manager, bukan di repository.
+
+Panduan deploy, backup/restore, monitoring, load test, dan UAT tersedia di [backend/OPERATIONS.md](./OPERATIONS.md). Uji restore, load test staging, sandbox merchant, serta UAT pemilik outlet tetap harus dilakukan di lingkungan operasional.
 
 ### 3. Seed Database Awal
 
@@ -172,35 +194,48 @@ Set-Location .\backend
 
 ### 2. POS & Katalog
 - `GET /api/v1/menus/catalog` — Katalog lengkap untuk UI POS kasir (1 call)
-- `POST /api/v1/orders` — Buat pesanan (POS / Online Channel)
+- `POST /api/v1/orders` — Buat pesanan (POS / Online Channel); wajib membawa `idempotency_key`
+- `GET /api/v1/orders` dan `GET /api/v1/orders/{id}` — Riwayat dan detail pesanan; daftar dapat difilter dengan `status`, `start_date`, `end_date`, dan `cashier_id`
 - `PATCH /api/v1/orders/{id}/status` — Ubah status (PREPARING, READY, COMPLETED)
-- `POST /api/v1/orders/{id}/payments` — Catat pembayaran tunai / QRIS statis
+- `POST /api/v1/orders/{id}/payments` — Catat pembayaran tunai / QRIS statis; wajib membawa `idempotency_key`
 - `POST /api/v1/orders/{id}/void` — Void transaksi (wajib PIN Admin, auto-revert stok)
+
+Diskon order di atas `MAX_ORDER_DISCOUNT_PERCENT` memerlukan token persetujuan singkat dari `POST /api/v1/auth/verify-pin` dengan `role: "admin"`; default batasnya 10% dan token berlaku 5 menit. QRIS statis dicatat pada audit log.
+
+Pesanan `DELIVERY` wajib menyertakan `channel_id` dan `external_order_id`; harga diambil dari harga menu per channel, komisi dihitung server, dan ID eksternal yang sama tidak membuat order kedua.
 
 ### 3. QR Menu (Publik & Kasir)
 - `GET /api/v1/public/qr/{token}/menu` — Buka menu via QR meja tanpa login
-- `POST /api/v1/public/qr/{token}/orders` — Kirim pesanan QR pelanggan
+- `POST /api/v1/public/qr/{token}/orders` — Kirim pesanan QR pelanggan; dibatasi default 10 permintaan per menit per IP dan 60 per menit per meja (`QR_ORDER_RATE_LIMIT`, `QR_ORDER_TABLE_RATE_LIMIT`), serta menerima `Idempotency-Key` untuk retry aman
 - `GET /api/v1/public/orders/{id}/status` — Cek status pesanan pelanggan
 - `POST /api/v1/public/orders/{id}/pay` — Generate tagihan QRIS dinamis via Payment Gateway
+- `POST /api/v1/public/orders/{id}/create-payment` — Alias endpoint pembuatan tagihan QRIS
+- `POST /api/v1/public/orders/{id}/poll-payment` — Poll status gateway dengan rate limit, dipakai sebagai cadangan webhook
 - `POST /api/v1/public/payments/webhook` — Webhook otomatis terverifikasi dari gateway
 - `GET /api/v1/orders/pending-approval` — Inbox pesanan QR tunai untuk kasir
 - `POST /api/v1/orders/{id}/approve` — Kasir terima pesanan (auto-potong stok)
 - `POST /api/v1/orders/{id}/reject` — Kasir tolak pesanan dengan alasan wajib
 
+Socket.IO namespace `/ws` memerlukan JWT access token saat koneksi (`auth: {token: ...}`); event `join_device` hanya dapat bergabung ke room perangkat pada device ID yang sama dengan token. Daftarkan token push FCM perangkat melalui `POST /api/v1/devices/fcm-token` dengan body `{"token":"..."}` dan access token perangkat. Pengiriman push aktif setelah `FCM_SERVICE_ACCOUNT_FILE` menunjuk file service account Firebase di server. Jika Firebase tidak tersedia, pesanan tetap tersimpan dan dapat diproses melalui inbox kasir.
+
+Gateway QRIS memakai provider Midtrans sandbox secara default. Provider dipilih melalui `PAYMENT_GATEWAY_PROVIDER`; integrasi provider berada di `app/payments/providers.py`. Tagihan hanya diterbitkan bila stok resep tersedia. Webhook diverifikasi dengan signature dan status API provider; callback duplikat idempoten, sedangkan status `expire`/`cancel`/`deny` menandai order `EXPIRED`. End-to-end sandbox masih memerlukan kredensial merchant valid dari environment dan callback webhook yang dapat dijangkau.
+
 ### 4. Inventori & Resep
 - `GET/POST /api/v1/ingredients` — Master bahan baku & saldo stok
 - `GET/POST /api/v1/recipes` — Resep (Bill of Materials) & kalkulasi otomatis HPP
-- `POST /api/v1/stock/movements` — Catat waste / penyesuaian stok
-- `POST /api/v1/stock/opname` — Stok opname & auto-balancing
-- `POST /api/v1/purchases` — Pembelian bahan baku
+- `GET /api/v1/inventory/stock-balances` — Saldo stok per bahan baku
+- `POST /api/v1/stock/movements` — Catat waste / penyesuaian stok dengan `idempotency_key`
+- `POST /api/v1/stock/opname` — Stok opname & auto-balancing dengan `idempotency_key`
+- `POST /api/v1/purchases` — Pembelian bahan baku dengan `idempotency_key`
 
 ### 5. Keuangan & Laporan
-- `POST /api/v1/shifts/open` & `POST /api/v1/shifts/{id}/close` — Buka/tutup shift kasir
-- `GET /api/v1/shifts/current` — Ringkasan kas laci shift aktif
-- `GET/POST /api/v1/expenses` — Catat pengeluaran operasional
-- `GET /api/v1/reports/sales` — Laporan penjualan dengan filter tanggal & channel
+- `POST /api/v1/shifts/open` & `POST /api/v1/shifts/{id}/close` — Buka/tutup shift kasir; keduanya memerlukan `idempotency_key`
+- `GET /api/v1/shifts/current` dan `GET /api/v1/shifts` — Ringkasan shift aktif milik kasir dan riwayat shift
+- `POST /api/v1/cash-movements` — Catat kas masuk/keluar dengan `idempotency_key`
+- `GET/POST /api/v1/expenses` — Catat pengeluaran operasional; POST memerlukan `idempotency_key`
+- `GET /api/v1/reports/sales` — Laporan penjualan dengan filter tanggal, tipe, channel, metode bayar, dan kasir; ringkasan memisahkan komisi platform dan pendapatan bersih
 - `GET /api/v1/reports/cash-summary` — Rekapitulasi kas vs non-tunai
-- `GET /api/v1/reports/charts` — Grafik menu terlaris & tipe pesanan
+- `GET /api/v1/reports/charts` — Grafik penjualan harian/jam, menu terlaris, tipe pesanan, dan channel
 - `GET /api/v1/reports/profit` — Laporan laba kotor (Omzet − HPP) [Khusus Admin/Super Admin]
 
 ### 6. Offline-Online Sync
